@@ -2,145 +2,68 @@ import streamlit as st
 
 
 # ==========================================================
-# PAGE ROUTES
+# PAGE ROUTES (CENTRALIZED)
 # ==========================================================
 
-PAGE_ROUTES = {
-    "Admin Dashboard": "pages/admin_dashboard.py",
-    "Maintenance Dashboard": "pages/maintenance_dashboard.py",
-    "Engineer Dashboard": "pages/engineer_dashboard.py",
-    "Operations Dashboard": "pages/operations_dashboard.py",
-    "Supervisor Dashboard": "pages/supervisor_dashboard.py",
-    "Guest Dashboard": "pages/guest_dashboard.py",
-    "Prediction": "pages/prediction.py",
-    "Analytics": "pages/analytics.py",
-    "Work Orders": "pages/maintenance_work_orders.py",
-    "History": "pages/history.py",
+ROUTES = {
+    "admin": "pages/admin_dashboard.py",
+    "engineer": "pages/engineer_dashboard.py",
+    "maintenance": "pages/maintenance_dashboard.py",
+    "maintenance_work_orders": "pages/maintenance_work_orders.py",
+    "operations": "pages/operations_dashboard.py",
+    "supervisor": "pages/supervisor_dashboard.py",
+    "prediction": "pages/prediction.py",
+    "analytics": "pages/analytics.py",
 }
 
 
 # ==========================================================
-# NAVIGATION BUTTON
+# SAFE NAVIGATOR
 # ==========================================================
 
-def navigation_button(label, page, icon=None, disabled=False):
-    """
-    Create a single navigation button.
+def go_to(page_key: str):
 
-    Example:
-        navigation_button("Prediction", "Prediction", "🤖")
-    """
-
-    text = f"{icon} {label}" if icon else label
-
-    if st.button(
-        text,
-        width="stretch",
-        disabled=disabled,
-        key=f"nav_{page}_{label}"
-    ):
-        st.switch_page(PAGE_ROUTES[page])
-
-
-# ==========================================================
-# QUICK NAVIGATION ROW
-# ==========================================================
-
-def quick_navigation(buttons):
-    """
-    Display navigation buttons in columns.
-
-    Example:
-
-    quick_navigation([
-        ("Prediction", "Prediction", "🤖"),
-        ("Analytics", "Analytics", "📈"),
-        ("Work Orders", "Work Orders", "🛠"),
-        ("Dashboard", "Admin Dashboard", "🏠")
-    ])
-    """
-
-    if not buttons:
+    if page_key not in ROUTES:
+        st.error(f"Unknown route: {page_key}")
         return
 
-    st.subheader("⚡ Quick Navigation")
-
-    cols = st.columns(len(buttons))
-
-    for col, item in zip(cols, buttons):
-
-        label = item[0]
-        page = item[1]
-
-        icon = item[2] if len(item) > 2 else None
-        disabled = item[3] if len(item) > 3 else False
-
-        with col:
-            navigation_button(
-                label,
-                page,
-                icon,
-                disabled
-            )
+    st.switch_page(ROUTES[page_key])
 
 
 # ==========================================================
-# SIDEBAR NAVIGATION
+# ROLE-BASED REDIRECT
 # ==========================================================
 
-def sidebar_navigation(buttons):
-    """
-    Display navigation buttons inside the sidebar.
+def route_by_role(user: dict):
 
-    Example:
+    if not isinstance(user, dict):
+        st.error("Invalid user session")
+        st.stop()
 
-    with st.sidebar:
-        sidebar_navigation([
-            ("Dashboard","Admin Dashboard","🏠"),
-            ("Prediction","Prediction","🤖")
-        ])
-    """
+    role = user.get("role", "")
 
-    st.sidebar.markdown("## 📂 Navigation")
-
-    for item in buttons:
-
-        label = item[0]
-        page = item[1]
-
-        icon = item[2] if len(item) > 2 else None
-        disabled = item[3] if len(item) > 3 else False
-
-        text = f"{icon} {label}" if icon else label
-
-        if st.sidebar.button(
-            text,
-            width="stretch",
-            disabled=disabled,
-            key=f"sidebar_{page}_{label}"
-        ):
-            st.switch_page(PAGE_ROUTES[page])
-
-
-# ==========================================================
-# GO TO DASHBOARD
-# ==========================================================
-
-def go_home(role):
-    """
-    Redirect a user to the correct dashboard.
-    """
-
-    routes = {
-        "Administrator": "Admin Dashboard",
-        "Maintenance Engineer": "Maintenance Dashboard",
-        "Engineer": "Engineer Dashboard",
-        "Operations Engineer": "Operations Dashboard",
-        "Supervisor": "Supervisor Dashboard",
-        "Guest": "Guest Dashboard",
+    mapping = {
+        "Administrator": "admin",
+        "Maintenance Engineer": "engineer",
+        "Operations Engineer": "operations",
+        "Supervisor": "supervisor",
+        "Guest": "maintenance_work_orders",
     }
 
-    dashboard = routes.get(role)
+    page_key = mapping.get(role)
 
-    if dashboard:
-        st.switch_page(PAGE_ROUTES[dashboard])
+    if not page_key:
+        st.error(f"Unknown role: {role}")
+        st.stop()
+
+    go_to(page_key)
+
+
+# ==========================================================
+# QUICK BUTTON NAVIGATION HELPERS
+# ==========================================================
+
+def nav_button(label: str, page_key: str):
+
+    if st.button(label, use_container_width=True):
+        go_to(page_key)
