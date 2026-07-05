@@ -4,7 +4,15 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
+
+# ==========================================================
+# OPTIONAL AUTO REFRESH (SAFE IMPORT)
+# ==========================================================
+try:
+    from streamlit_autorefresh import st_autorefresh
+    st_autorefresh(interval=10000, key="engineer_dashboard_refresh")
+except Exception:
+    pass
 
 # ==========================================================
 # PROJECT ROOT
@@ -14,22 +22,21 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
 # ==========================================================
-# IMPORTS
+# IMPORTS (SAFE LOADING)
 # ==========================================================
 
 from components.header import show_header
 from components.sidebar import show_sidebar
 from components.footer import show_footer
 
+from utils.simulator import generate_sensor_data
+from utils.plant import plant_status
+from ml.predict import predict_failure
+
 from database.work_orders import (
     get_work_orders,
-    update_work_order_status,
-    create_work_order,
-    create_work_order_from_prediction
+    change_work_order_status   # ✅ FIXED (was wrong before)
 )
-
-from utils.simulator import generate_sensor_data
-from ml.predict import predict_failure
 
 # ==========================================================
 # PAGE CONFIG
@@ -41,30 +48,15 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🔧 Engineer Dashboard")
-
-# ==========================================================
-# AUTO REFRESH (FIXED KEY)
-# ==========================================================
-
-st_autorefresh(
-    interval=10000,
-    key="engineer_dashboard_refresh"
-)
-
 # ==========================================================
 # AUTH CHECK
 # ==========================================================
 
-if "user" not in st.session_state:
+if "user" not in st.session_state or st.session_state.user is None:
     st.switch_page("app.py")
     st.stop()
 
 user = st.session_state.user
-
-if not user:
-    st.switch_page("app.py")
-    st.stop()
 
 allowed_roles = ["Administrator", "Maintenance Engineer", "Engineer"]
 
@@ -73,14 +65,19 @@ if user["role"] not in allowed_roles:
     st.stop()
 
 # ==========================================================
-# HEADER
+# UI HEADER
 # ==========================================================
 
-show_header(user, "🔧 Engineer Dashboard", "Diagnostics & Maintenance Center")
+show_header(
+    user,
+    "🔧 Engineer Dashboard",
+    "Maintenance & Diagnostics Center"
+)
+
 show_sidebar(user)
 
 # ==========================================================
-# LOAD DATA (SAFE)
+# LOAD DATA SAFELY
 # ==========================================================
 
 try:
@@ -88,26 +85,113 @@ try:
 except Exception:
     orders = pd.DataFrame()
 
-if orders is None:
-    orders = pd.DataFrame()
-
-# ==========================================================
+try:
+    plants = plant_status()
+except Exception:
+    plants = pd.DataFrame()
+    # ==========================================================
 # KPI CALCULATIONS (SAFE)
 # ==========================================================
 
-if not orders.empty:
+total_orders = len(orders)
+
+pending = 0
+approved = 0
+completed = 0
+rejected = 0
+
+if not orders.empty and "status" in orders.columns:
 
     pending = (orders["status"] == "PENDING").sum()
     approved = (orders["status"] == "APPROVED").sum()
     completed = (orders["status"] == "COMPLETED").sum()
     rejected = (orders["status"] == "REJECTED").sum()
 
-else:
-    pending = approved = completed = rejected = 0
+# ==========================================================
+# PLANT STATUS COUNTERS (SAFE)
+# ==========================================================
+
+critical_assets = 0
+warning_assets = 0
+normal_assets = 0
+
+if not plants.empty and "Status" in plants.columns:
+
+    status = plants["Status"].astype(str)
+
+    normal_assets = status.str.contains(
+        "NORMAL", case=False, na=False
+    ).sum()
+
+    warning_assets = status.str.contains(
+        "WARNING", case=False, na=False
+    ).sum()
+
+    critical_assets = status.str.contains(
+        "CRITICAL", case=False, na=False
+    ).sum()
 
 # ==========================================================
-# MACHINE LIST
+# KPI DASHBOARD UI
 # ==========================================================
+
+st.subheader("📊 Maintenance Operations Overview")
+
+c1, c2, c3, c4 = st.columns(4)
+
+c1.metric("Work Orders", total_orders)
+c2.metric("Pending", pending)
+c3.metric("Completed", completed)
+c4.metric("Critical Assets", critical_assets)
+
+st.divider()
+
+# ==========================================================
+# PLANT STATUS SECTION
+# ==========================================================
+
+left, right = st.columns([2, 1])
+
+with left:
+
+    st.subheader("🏭 Live Plant Status")
+
+    if plants.empty:
+        st.info("No plant data available.")
+    else:
+        st.dataframe(
+            plants,
+            width="stretch",
+            hide_index=True
+        )
+
+with right:
+
+    st.subheader("📋 Work Order Summary")
+
+    if orders.empty:
+        st.info("No work orders available.")
+    else:
+        summary = (
+            orders["status"]
+            .value_counts()
+            .reset_index()
+        )
+
+        summary.columns = ["Status", "Count"]
+
+        st.dataframe(
+            summary,
+            width="stretch",
+            hide_index=True
+        )
+
+st.divider()
+# ==========================================================
+# LIVE AI MACHINE MONITORING (SAFE + STABLE)
+# ==========================================================
+
+st.subheader("🤖 AI Machine Monitoring")
 
 machines = [
     "Pump A1",
@@ -119,169 +203,232 @@ machines = [
 
 records = []
 
-# ==========================================================
-# AI MONITORING
-# ==========================================================
-
 for machine in machines:
 
-    sensor = generate_sensor_data()
+    try:
+        sensor = generate_sensor_data()
 
-    prediction, probability = predict_failure(
-        sensor["temperature"],
-        sensor["pressure"],
-        sensor["vibration"],
-        sensor["current"],
-        sensor["rpm"],
-        sensor["running_hours"]
-    )
+        prediction, probability = predict_failure(
+            sensor["temperature"],
+            sensor["pressure"],
+            sensor["vibration"],
+            sensor["current"],
+            sensor["rpm"],
+            sensor["running_hours"]
+        )
 
-    # auto work order creation (safe function)
-    create_work_order_from_prediction(
-        machine=machine,
-        risk_score=probability,
-        sensor_data=sensor
-    )
+        # safety check
+        probability = float(probability)
 
-    records.append({
-        "Machine": machine,
-        "Temperature (°C)": round(sensor["temperature"], 2),
-        "Pressure (bar)": round(sensor["pressure"], 2),
-        "Vibration": round(sensor["vibration"], 2),
-        "Current (A)": round(sensor["current"], 2),
-        "RPM": int(sensor["rpm"]),
-        "Health (%)": round((1 - probability) * 100, 1),
-        "Risk (%)": round(probability * 100, 2),
-        "Status": "🔴 Critical" if probability >= 0.7
-                  else "🟡 Warning" if probability >= 0.4
-                  else "🟢 Normal"
-    })
+        # auto work order trigger (safe call)
+        try:
+            from database.work_orders import create_work_order_from_prediction
 
-machine_df = pd.DataFrame(records)
+            create_work_order_from_prediction(
+                machine=machine,
+                risk_score=probability,
+                sensor_data=sensor
+            )
+        except Exception:
+            pass
+
+        records.append({
+            "Machine": machine,
+            "Temperature (°C)": round(sensor["temperature"], 2),
+            "Pressure (bar)": round(sensor["pressure"], 2),
+            "Vibration": round(sensor["vibration"], 2),
+            "Current (A)": round(sensor["current"], 2),
+            "RPM": int(sensor["rpm"]),
+            "Prediction": "Failure" if prediction else "Normal",
+            "Risk (%)": round(probability * 100, 2)
+        })
+
+    except Exception:
+        # prevents dashboard crash if ML fails
+        continue
+
+
+# convert safely
+monitor_df = pd.DataFrame(records)
+
+if monitor_df.empty:
+    st.warning("No sensor data available.")
+    st.stop()
 
 # ==========================================================
-# KPI DASHBOARD
+# DISPLAY TABLE
 # ==========================================================
 
-st.subheader("📊 Overview")
+st.dataframe(
+    monitor_df,
+    width="stretch",
+    hide_index=True
+)
+
+# ==========================================================
+# RISK CHART
+# ==========================================================
+
+st.subheader("📈 Machine Failure Risk")
+
+st.bar_chart(
+    monitor_df.set_index("Machine")["Risk (%)"]
+)
+
+# ==========================================================
+# HIGH RISK ALERTS
+# ==========================================================
+
+high_risk = monitor_df[monitor_df["Risk (%)"] >= 70]
+
+if high_risk.empty:
+    st.success("No high-risk machines detected.")
+else:
+    st.error(f"{len(high_risk)} machine(s) require attention.")
+
+    st.dataframe(
+        high_risk,
+        width="stretch",
+        hide_index=True
+    )
+
+st.divider()
+# ==========================================================
+# WORK ORDER STATUS MANAGEMENT (SAFE)
+# ==========================================================
+
+st.subheader("🛠 Work Order Management")
+
+if orders.empty:
+    st.info("No work orders available.")
+else:
+
+    editable = orders[orders["status"] != "COMPLETED"]
+
+    if editable.empty:
+        st.success("All work orders are completed.")
+    else:
+
+        # FIX: unique keys to avoid StreamlitDuplicateElementId
+        selected_id = st.selectbox(
+            "Select Work Order ID",
+            editable["id"].tolist(),
+            key="wo_select_engineer"
+        )
+
+        new_status = st.selectbox(
+            "Update Status",
+            ["PENDING", "APPROVED", "COMPLETED", "REJECTED"],
+            key="wo_status_engineer"
+        )
+
+        if st.button("Update Work Order", key="update_btn_engineer"):
+
+            try:
+                from database.work_orders import change_work_order_status
+
+                change_work_order_status(selected_id, new_status)
+
+                st.success(f"Work Order #{selected_id} updated to {new_status}")
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Update failed: {str(e)}")
+
+st.divider()
+
+# ==========================================================
+# APPROVED WORK ORDERS
+# ==========================================================
+
+st.subheader("✔ Approved Work Orders")
+
+if not orders.empty:
+
+    approved = orders[orders["status"] == "APPROVED"]
+
+    if approved.empty:
+        st.info("No approved work orders.")
+    else:
+        st.dataframe(
+            approved,
+            width="stretch",
+            hide_index=True
+        )
+
+st.divider()
+
+# ==========================================================
+# ENGINEER NOTES (FIXED)
+# ==========================================================
+
+st.subheader("📝 Engineer Notes")
+
+notes = st.text_area(
+    "Write maintenance notes",
+    height=150,
+    key="engineer_notes_box"
+)
+
+if st.button("Save Notes", key="save_notes_engineer"):
+
+    if notes.strip():
+        st.success("Notes saved successfully (demo mode).")
+    else:
+        st.warning("Please write something before saving.")
+
+st.divider()
+
+# ==========================================================
+# QUICK NAVIGATION (FIXED DUPLICATE IDS)
+# ==========================================================
+
+st.subheader("⚡ Quick Navigation")
 
 c1, c2, c3, c4 = st.columns(4)
 
-c1.metric("Machines", len(machine_df))
-c2.metric("Pending", pending)
-c3.metric("Approved", approved)
-c4.metric("Completed", completed)
+with c1:
+    st.button(
+        "🤖 Prediction",
+        on_click=lambda: st.switch_page("pages/prediction.py"),
+        key="nav_pred_engineer"
+    )
+
+with c2:
+    st.button(
+        "📈 Analytics",
+        on_click=lambda: st.switch_page("pages/analytics.py"),
+        key="nav_analytics_engineer"
+    )
+
+with c3:
+    st.button(
+        "🛠 Work Orders",
+        on_click=lambda: st.switch_page("pages/maintenance_work_orders.py"),
+        key="nav_work_engineer"
+    )
+
+with c4:
+    st.button(
+        "🏠 Dashboard",
+        on_click=lambda: st.switch_page("app.py"),
+        key="nav_home_engineer"
+    )
 
 st.divider()
 
 # ==========================================================
-# LIVE TABLE (FIXED)
+# SYSTEM STATUS (FINAL SECTION)
 # ==========================================================
 
-st.subheader("📡 Live Diagnostics")
+st.subheader("🟢 System Health")
 
-st.dataframe(machine_df, use_container_width=True, hide_index=True)
-
-# ==========================================================
-# CRITICAL ALERTS
-# ==========================================================
-
-st.subheader("🚨 Critical Machines")
-
-critical_df = machine_df[machine_df["Risk (%)"] >= 70]
-
-if critical_df.empty:
-    st.success("No critical machines detected.")
+if "high_risk" in locals() and len(high_risk) == 0:
+    st.success("All machines are operating normally.")
+elif "high_risk" in locals() and len(high_risk) <= 2:
+    st.warning("Some machines require inspection.")
 else:
-    st.error(f"{len(critical_df)} machine(s) require attention")
-    st.dataframe(critical_df, use_container_width=True, hide_index=True)
-
-# ==========================================================
-# CREATE WORK ORDER (FIXED KEYS)
-# ==========================================================
-
-st.divider()
-st.subheader("➕ Create Work Order")
-
-machine_sel = st.selectbox("Machine", machines, key="eng_machine")
-issue = st.text_area("Issue", key="eng_issue")
-priority = st.selectbox("Priority", ["LOW", "MEDIUM", "HIGH"], key="eng_priority")
-
-if st.button("Create Work Order", key="eng_create_btn"):
-
-    if issue.strip():
-
-        create_work_order(
-            machine=machine_sel,
-            issue=issue,
-            priority=priority,
-            created_by=user["fullname"]
-        )
-
-        st.success("Work order created")
-        st.rerun()
-
-    else:
-        st.warning("Enter issue description")
-
-# ==========================================================
-# UPDATE STATUS (FIXED ID KEY)
-# ==========================================================
-
-st.divider()
-st.subheader("⚙ Update Work Order")
-
-if not orders.empty:
-
-    order_id = st.selectbox(
-        "Work Order ID",
-        orders["id"].tolist(),
-        key="eng_order_id"
-    )
-
-    new_status = st.selectbox(
-        "Status",
-        ["PENDING", "APPROVED", "IN_PROGRESS", "COMPLETED", "REJECTED"],
-        key="eng_status"
-    )
-
-    if st.button("Update Status", key="eng_update_btn"):
-
-        update_work_order_status(order_id, new_status)
-
-        st.success("Updated successfully")
-        st.rerun()
-
-# ==========================================================
-# RECENT WORK ORDERS
-# ==========================================================
-
-st.divider()
-st.subheader("📋 Recent Work Orders")
-
-if not orders.empty:
-
-    recent = orders.sort_values("id", ascending=False).head(5)
-
-    st.dataframe(recent, use_container_width=True, hide_index=True)
-
-# ==========================================================
-# SYSTEM STATUS
-# ==========================================================
-
-st.divider()
-st.subheader("🟢 System Status")
-
-if not machine_df.empty:
-
-    high_risk = (machine_df["Risk (%)"] >= 70).sum()
-
-    if high_risk == 0:
-        st.success("All systems normal")
-    elif high_risk <= 2:
-        st.warning("Some machines need attention")
-    else:
-        st.error("Critical maintenance required")
+    st.error("Immediate maintenance required.")
 
 # ==========================================================
 # FOOTER
@@ -289,4 +436,6 @@ if not machine_df.empty:
 
 show_footer()
 
-st.caption("Engineer Dashboard • AI Predictive Maintenance System")
+st.caption(
+    "Engineer Dashboard • Industrial AI Predictive Maintenance System"
+)
