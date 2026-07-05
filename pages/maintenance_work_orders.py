@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-from datetime import datetime
 
 import streamlit as st
 import pandas as pd
@@ -22,8 +21,8 @@ from components.sidebar import show_sidebar
 from components.footer import show_footer
 
 from database.work_orders import (
-    get_work_orders,
-    update_work_order_status,
+    get_all_work_orders,
+    change_work_order_status,
     delete_work_order
 )
 
@@ -37,17 +36,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# ==========================================================
-# AUTO REFRESH
-# ==========================================================
-
-st_autorefresh(
-    interval=10000,
-    key="work_orders_refresh"
-)
+st_autorefresh(interval=10000, key="work_orders_refresh")
 
 # ==========================================================
-# LOGIN
+# LOGIN CHECK
 # ==========================================================
 
 if "user" not in st.session_state:
@@ -85,28 +77,25 @@ show_header(
 show_sidebar(user)
 
 # ==========================================================
-# LOAD DATABASE
+# LOAD DATA
 # ==========================================================
 
-orders = get_work_orders()
+orders = get_all_work_orders()
 
 # ==========================================================
-# KPI
+# KPI SAFE CALC
 # ==========================================================
-
-st.subheader("📊 Work Order Overview")
 
 if orders.empty:
-
     total = pending = approved = completed = rejected = 0
-
 else:
-
     total = len(orders)
     pending = (orders["status"] == "PENDING").sum()
     approved = (orders["status"] == "APPROVED").sum()
     completed = (orders["status"] == "COMPLETED").sum()
     rejected = (orders["status"] == "REJECTED").sum()
+
+st.subheader("📊 Work Order Overview")
 
 c1, c2, c3, c4, c5 = st.columns(5)
 
@@ -119,47 +108,35 @@ c5.metric("Rejected", rejected)
 st.divider()
 
 # ==========================================================
-# SEARCH
+# FILTERS
 # ==========================================================
 
 left, right = st.columns(2)
 
 with left:
-
-    search = st.text_input(
-        "🔍 Search Machine"
-    )
+    search = st.text_input("🔍 Search Machine", key="wo_search")
 
 with right:
-
-    status = st.selectbox(
-        "Filter Status",
+    status_options = (
         ["ALL"] +
-        (
-            sorted(orders["status"].unique())
-            if not orders.empty
-            else []
-        )
+        list(orders["status"].unique())
+        if not orders.empty and "status" in orders.columns
+        else ["ALL"]
     )
+
+    status = st.selectbox("Filter Status", status_options, key="wo_status")
 
 filtered = orders.copy()
 
 if not filtered.empty:
 
     if search:
-
         filtered = filtered[
-            filtered["machine"]
-            .str.contains(search,
-            case=False,
-            na=False)
+            filtered["machine"].astype(str).str.contains(search, case=False, na=False)
         ]
 
     if status != "ALL":
-
-        filtered = filtered[
-            filtered["status"] == status
-        ]
+        filtered = filtered[filtered["status"] == status]
 
 # ==========================================================
 # TABLE
@@ -168,88 +145,59 @@ if not filtered.empty:
 st.subheader("📋 Work Orders")
 
 if filtered.empty:
-
     st.info("No work orders found.")
-
 else:
-
-    st.dataframe(
-        filtered,
-        width="stretch",
-        hide_index=True
-    )
+    st.dataframe(filtered, use_container_width=True, hide_index=True)
 
 st.divider()
 
 # ==========================================================
-# UPDATE
+# UPDATE STATUS (FIXED KEYS)
 # ==========================================================
 
-if (
-    user["role"] in
-    ["Administrator", "Supervisor"]
-    and not orders.empty
-):
+if user["role"] in ["Administrator", "Supervisor"] and not orders.empty:
 
-    st.subheader("⚙ Update Status")
+    st.subheader("⚙ Update Work Order Status")
 
-    selected = st.selectbox(
-        "Work Order",
-        orders["id"]
+    selected_id = st.selectbox(
+        "Select Work Order ID",
+        orders["id"].tolist(),
+        key="update_select"
     )
 
     new_status = st.selectbox(
-        "Status",
-        [
-            "PENDING",
-            "APPROVED",
-            "COMPLETED",
-            "REJECTED"
-        ]
+        "New Status",
+        ["PENDING", "APPROVED", "COMPLETED", "REJECTED"],
+        key="update_status"
     )
 
-    if st.button(
-        "Update",
-        width="stretch"
-    ):
+    if st.button("Update Status", key="update_btn"):
 
-        update_work_order_status(
-            selected,
-            new_status
-        )
+        change_work_order_status(selected_id, new_status)
 
-        st.success("Status updated.")
-
+        st.success("Status updated successfully.")
         st.rerun()
 
 # ==========================================================
-# DELETE
+# DELETE (ADMIN ONLY)
 # ==========================================================
 
-if (
-    user["role"] == "Administrator"
-    and not orders.empty
-):
+if user["role"] == "Administrator" and not orders.empty:
 
     st.divider()
-
     st.subheader("🗑 Delete Work Order")
 
     delete_id = st.selectbox(
-        "Select Work Order",
-        orders["id"],
-        key="delete"
+        "Select Work Order to Delete",
+        orders["id"].tolist(),
+        key="delete_select"
     )
 
-    if st.button(
-        "Delete",
-        width="stretch"
-    ):
+    if st.button("Delete Work Order", key="delete_btn"):
 
         delete_work_order(delete_id)
 
-        st.success("Deleted successfully.")
-
+        st.success("Work order deleted.")
         st.rerun()
 
 # ==========================================================
@@ -257,21 +205,12 @@ if (
 # ==========================================================
 
 st.divider()
-
 st.subheader("📈 Status Distribution")
 
 if not orders.empty:
-
-    chart = (
-        orders["status"]
-        .value_counts()
-    )
-
-    st.bar_chart(chart)
-
+    st.bar_chart(orders["status"].value_counts())
 else:
-
-    st.info("Nothing to display.")
+    st.info("No data available.")
 
 # ==========================================================
 # FOOTER

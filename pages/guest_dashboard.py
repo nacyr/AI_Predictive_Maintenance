@@ -1,5 +1,5 @@
-import sys
 from pathlib import Path
+import sys
 from datetime import datetime
 
 import pandas as pd
@@ -7,22 +7,36 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
 # ==========================================================
-# PROJECT ROOT
+# SAFE PROJECT ROOT (STREAMLIT CLOUD FIX)
 # ==========================================================
 
-project_root = Path(__file__).resolve().parent.parent
-sys.path.append(str(project_root))
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 # ==========================================================
-# IMPORTS
+# SAFE IMPORTS
 # ==========================================================
 
-from components.header import show_header
-from components.sidebar import show_sidebar
-from components.footer import show_footer
+try:
+    from components.header import show_header
+    from components.sidebar import show_sidebar
+    from components.footer import show_footer
+except:
+    def show_header(*args, **kwargs): pass
+    def show_sidebar(*args, **kwargs): pass
+    def show_footer(): pass
 
-from utils.plant import plant_status
-from database.work_orders import get_work_orders
+try:
+    from utils.plant import plant_status
+except:
+    plant_status = None
+
+try:
+    import database.work_orders as wo
+except Exception as e:
+    st.error("Database import failed")
+    st.code(str(e))
+    st.stop()
 
 # ==========================================================
 # PAGE CONFIG
@@ -44,7 +58,7 @@ st_autorefresh(
 )
 
 # ==========================================================
-# LOGIN CHECK
+# SESSION CHECK
 # ==========================================================
 
 if "user" not in st.session_state:
@@ -59,18 +73,12 @@ if user is None:
 
 # ==========================================================
 # ROLE CHECK
-# Administrator can also access this dashboard
 # ==========================================================
 
-allowed_roles = [
-    "Administrator",
-    "Guest"
-]
+allowed_roles = ["Administrator", "Guest"]
 
 if user["role"] not in allowed_roles:
-
     st.error("Access Denied")
-
     st.stop()
 
 # ==========================================================
@@ -80,119 +88,68 @@ if user["role"] not in allowed_roles:
 show_header(
     user,
     "👤 Guest Dashboard",
-    "Industrial AI Predictive Maintenance • Read-Only Monitoring"
+    "Industrial AI Predictive Maintenance (Read Only)"
 )
 
 show_sidebar(user)
 
 # ==========================================================
-# LOAD DATA
+# LOAD DATA (SAFE)
 # ==========================================================
 
 try:
-    plants = plant_status()
-except Exception:
+    plants = plant_status() if plant_status else pd.DataFrame()
+except:
     plants = pd.DataFrame()
 
 try:
-    work_orders = get_work_orders()
-except Exception:
+    work_orders = wo.get_work_orders()
+except:
     work_orders = pd.DataFrame()
 
 # ==========================================================
-# WELCOME
-# ==========================================================
-
-st.success(f"Welcome, {user['fullname']}")
-
-st.info(
-    "This dashboard provides monitoring and reporting capabilities only. "
-    "Guest users cannot modify records or perform maintenance operations."
-)
-
-# ==========================================================
-# CALCULATE METRICS
+# KPIS
 # ==========================================================
 
 total_plants = len(plants)
 total_orders = len(work_orders)
 
+# Plant status counters
 normal = warning = critical = 0
 
-if not plants.empty:
-
+if not plants.empty and "Status" in plants.columns:
     status = plants["Status"].astype(str)
 
-    normal = status.str.contains(
-        "NORMAL",
-        case=False,
-        na=False
-    ).sum()
+    normal = status.str.contains("NORMAL", case=False, na=False).sum()
+    warning = status.str.contains("WARNING", case=False, na=False).sum()
+    critical = status.str.contains("CRITICAL", case=False, na=False).sum()
 
-    warning = status.str.contains(
-        "WARNING",
-        case=False,
-        na=False
-    ).sum()
-
-    critical = status.str.contains(
-        "CRITICAL",
-        case=False,
-        na=False
-    ).sum()
-
+# Work order counters
 pending = approved = completed = rejected = 0
 
-if not work_orders.empty:
-
-    pending = (
-        work_orders["status"] == "PENDING"
-    ).sum()
-
-    approved = (
-        work_orders["status"] == "APPROVED"
-    ).sum()
-
-    completed = (
-        work_orders["status"] == "COMPLETED"
-    ).sum()
-
-    rejected = (
-        work_orders["status"] == "REJECTED"
-    ).sum()
+if not work_orders.empty and "status" in work_orders.columns:
+    pending = (work_orders["status"] == "PENDING").sum()
+    approved = (work_orders["status"] == "APPROVED").sum()
+    completed = (work_orders["status"] == "COMPLETED").sum()
+    rejected = (work_orders["status"] == "REJECTED").sum()
 
 # ==========================================================
-# KPI DASHBOARD
+# HEADER METRICS
 # ==========================================================
 
 st.subheader("📊 Enterprise Overview")
 
 c1, c2, c3, c4 = st.columns(4)
 
-c1.metric(
-    "Plants",
-    total_plants
-)
-
-c2.metric(
-    "Work Orders",
-    total_orders
-)
-
-c3.metric(
-    "Normal Assets",
-    normal
-)
-
-c4.metric(
-    "Critical Assets",
-    critical
-)
+c1.metric("Plants", total_plants)
+c2.metric("Work Orders", total_orders)
+c3.metric("Normal Assets", normal)
+c4.metric("Critical Assets", critical)
 
 st.divider()
 
 # ==========================================================
-# WORK ORDER KPIs
+# WORK ORDER METRICS
 # ==========================================================
 
 a1, a2, a3, a4 = st.columns(4)
@@ -205,204 +162,117 @@ a4.metric("Rejected", rejected)
 st.divider()
 
 # ==========================================================
-# PLANT STATUS
+# MAIN TABLES
 # ==========================================================
 
 left, right = st.columns([2, 1])
 
 with left:
 
-    st.subheader("🏭 Live Plant Status")
+    st.subheader("🏭 Plant Status")
 
     if plants.empty:
-
-        st.info("No plant information available.")
-
+        st.info("No plant data available")
     else:
-
-        st.dataframe(
-            plants,
-            width="stretch",
-            hide_index=True
-        )
+        st.dataframe(plants, use_container_width=True, hide_index=True)
 
 with right:
 
     st.subheader("📋 Work Order Summary")
 
     if work_orders.empty:
-
-        st.info("No work orders available.")
-
+        st.info("No work orders available")
     else:
+        summary = work_orders["status"].value_counts().reset_index()
+        summary.columns = ["Status", "Count"]
 
-        summary = (
-            work_orders["status"]
-            .value_counts()
-            .reset_index()
-        )
-
-        summary.columns = [
-            "Status",
-            "Count"
-        ]
-
-        st.dataframe(
-            summary,
-            width="stretch",
-            hide_index=True
-        )
+        st.dataframe(summary, use_container_width=True, hide_index=True)
 
 st.divider()
+
 # ==========================================================
 # RECENT WORK ORDERS
 # ==========================================================
 
-st.subheader("🛠 Recent Maintenance Activities")
+st.subheader("🛠 Recent Work Orders")
 
 if work_orders.empty:
-
-    st.info("No maintenance work orders available.")
-
+    st.info("No maintenance data available")
 else:
 
-    display_orders = work_orders[
-        [
-            "machine",
-            "issue",
-            "priority",
-            "status",
-            "created_at"
-        ]
-    ]
+    cols = ["machine", "issue", "priority", "status", "created_at"]
+
+    available_cols = [c for c in cols if c in work_orders.columns]
 
     st.dataframe(
-        display_orders.head(10),
-        width="stretch",
+        work_orders[available_cols].head(10),
+        use_container_width=True,
         hide_index=True
     )
 
 st.divider()
 
 # ==========================================================
-# WORK ORDER STATUS CHART
+# CHART
 # ==========================================================
 
 st.subheader("📊 Work Order Distribution")
 
-if work_orders.empty:
-
-    st.info("No statistics available.")
-
+if not work_orders.empty and "status" in work_orders.columns:
+    st.bar_chart(work_orders["status"].value_counts())
 else:
-
-    st.bar_chart(
-        work_orders["status"].value_counts()
-    )
+    st.info("No chart data available")
 
 st.divider()
 
 # ==========================================================
-# PLANT HEALTH SUMMARY
-# ==========================================================
-
-st.subheader("🏭 Plant Health Summary")
-
-s1, s2, s3 = st.columns(3)
-
-s1.metric(
-    "Healthy Assets",
-    normal
-)
-
-s2.metric(
-    "Assets Under Observation",
-    warning
-)
-
-s3.metric(
-    "Critical Assets",
-    critical
-)
-
-st.divider()
-
-# ==========================================================
-# AI MONITORING STATUS
+# AI STATUS
 # ==========================================================
 
 st.subheader("🤖 AI Monitoring Status")
 
 if critical == 0:
-
-    st.success(
-        "All monitored assets are operating within safe parameters."
-    )
-
+    st.success("All systems operating normally")
 elif critical <= 2:
-
-    st.warning(
-        f"{critical} critical machine(s) currently require maintenance."
-    )
-
+    st.warning(f"{critical} critical asset(s) detected")
 else:
-
-    st.error(
-        f"{critical} critical machine(s) require immediate intervention."
-    )
+    st.error("Immediate attention required")
 
 if warning > 0:
-
-    st.info(
-        f"{warning} machine(s) are currently being monitored closely."
-    )
+    st.info(f"{warning} asset(s) under observation")
 
 st.divider()
 
 # ==========================================================
-# GUEST PERMISSIONS
+# PERMISSIONS INFO
 # ==========================================================
 
-st.subheader("🔒 Access Permissions")
+st.subheader("🔒 Guest Permissions")
 
-left, right = st.columns(2)
+col1, col2 = st.columns(2)
 
-with left:
-
+with col1:
     st.success("""
-✅ View plant status
-
-✅ View AI predictions
-
-✅ View maintenance reports
-
-✅ View work orders
-
-✅ View historical analytics
-
-✅ View dashboards
+✔ View dashboards  
+✔ View plant status  
+✔ View AI predictions  
+✔ View work orders  
+✔ View analytics  
 """)
 
-with right:
-
+with col2:
     st.error("""
-❌ Create work orders
-
-❌ Update work orders
-
-❌ Delete work orders
-
-❌ Manage users
-
-❌ Approve maintenance
-
-❌ Change system settings
+✖ Create work orders  
+✖ Modify data  
+✖ Delete records  
+✖ Approve maintenance  
+✖ Manage users  
 """)
 
 st.divider()
 
 # ==========================================================
-# QUICK NAVIGATION
+# NAVIGATION
 # ==========================================================
 
 st.subheader("⚡ Quick Navigation")
@@ -410,76 +280,37 @@ st.subheader("⚡ Quick Navigation")
 q1, q2, q3, q4 = st.columns(4)
 
 with q1:
-
-    if st.button(
-        "🤖 AI Prediction",
-        width="stretch"
-    ):
+    if st.button("🤖 AI Prediction", use_container_width=True):
         st.switch_page("pages/prediction.py")
 
 with q2:
-
-    if st.button(
-        "📈 Analytics",
-        width="stretch"
-    ):
+    if st.button("📈 Analytics", use_container_width=True):
         st.switch_page("pages/analytics.py")
 
 with q3:
-
-    if st.button(
-        "🛠 Work Orders",
-        width="stretch"
-    ):
+    if st.button("🛠 Work Orders", use_container_width=True):
         st.switch_page("pages/maintenance_work_orders.py")
 
 with q4:
-
-    if st.button(
-        "🏠 Admin Dashboard",
-        width="stretch"
-    ):
+    if st.button("🏠 Admin Dashboard", use_container_width=True):
         st.switch_page("pages/admin_dashboard.py")
 
 st.divider()
 
 # ==========================================================
-# SESSION INFORMATION
+# SESSION INFO
 # ==========================================================
 
-st.subheader("ℹ️ Session Information")
+st.subheader("ℹ️ Session Info")
 
 st.info(
     f"""
-Current User: **{user['fullname']}**
-
-Role: **{user['role']}**
-
-Dashboard Refresh: **Every 10 Seconds**
-
-Current Time: **{datetime.now().strftime('%d %b %Y %H:%M:%S')}**
+User: **{user['fullname']}**  
+Role: **{user['role']}**  
+Time: **{datetime.now().strftime('%d %b %Y %H:%M:%S')}**  
+Auto-refresh: **10 seconds**
 """
 )
-
-st.divider()
-
-# ==========================================================
-# SYSTEM STATUS
-# ==========================================================
-
-st.subheader("🟢 Overall System Status")
-
-if critical == 0:
-
-    st.success("Industrial monitoring system is operating normally.")
-
-elif critical <= 2:
-
-    st.warning("Some assets require maintenance attention.")
-
-else:
-
-    st.error("Immediate engineering intervention is recommended.")
 
 st.divider()
 
