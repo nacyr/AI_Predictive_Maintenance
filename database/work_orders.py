@@ -1,21 +1,28 @@
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta
+
 import pandas as pd
 
 # ==========================================================
-# DB PATH
+# DATABASE PATH
 # ==========================================================
 
 DB_PATH = Path(__file__).resolve().parent / "work_orders.db"
 
 
+# ==========================================================
+# CONNECTION
+# ==========================================================
+
 def get_connection():
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 # ==========================================================
-# INIT TABLE
+# CREATE TABLE
 # ==========================================================
 
 def create_work_orders_table():
@@ -44,24 +51,102 @@ def create_work_orders_table():
 # CREATE WORK ORDER
 # ==========================================================
 
-def create_work_order(machine, issue, priority="MEDIUM", created_by=None):
+def create_work_order(
+    machine,
+    issue,
+    priority="MEDIUM",
+    created_by=None,
+    assigned_to=None
+):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        INSERT INTO work_orders (machine, issue, priority, created_by)
-        VALUES (?, ?, ?, ?)
-    """, (machine, issue, priority, created_by))
+    cursor.execute(
+        """
+        INSERT INTO work_orders
+        (
+            machine,
+            issue,
+            priority,
+            status,
+            created_by,
+            assigned_to
+        )
+        VALUES (?, ?, ?, 'PENDING', ?, ?)
+        """,
+        (
+            machine,
+            issue,
+            priority,
+            created_by,
+            assigned_to
+        )
+    )
 
     conn.commit()
     conn.close()
 
+    return True
+
 
 # ==========================================================
-# UPDATE WORK ORDER (CORE FIX)
+# READ ALL WORK ORDERS
+# ==========================================================
+
+def get_work_orders():
+
+    conn = get_connection()
+
+    df = pd.read_sql_query(
+        """
+        SELECT *
+        FROM work_orders
+        ORDER BY datetime(created_at) DESC
+        """,
+        conn
+    )
+
+    conn.close()
+
+    return df
+
+
+# Compatibility alias
+get_all_work_orders = get_work_orders
+
+
+# ==========================================================
+# GET SINGLE WORK ORDER
+# ==========================================================
+
+def get_work_order(work_order_id):
+
+    conn = get_connection()
+
+    df = pd.read_sql_query(
+        """
+        SELECT *
+        FROM work_orders
+        WHERE id=?
+        """,
+        conn,
+        params=(work_order_id,)
+    )
+
+    conn.close()
+
+    if df.empty:
+        return None
+
+    return df.iloc[0].to_dict()
+
+
+# ==========================================================
+# UPDATE WORK ORDER
 # ==========================================================
 
 def update_work_order(work_order_id, **kwargs):
+
     if not kwargs:
         return False
 
@@ -71,12 +156,12 @@ def update_work_order(work_order_id, **kwargs):
     fields = []
     values = []
 
-    for k, v in kwargs.items():
-        fields.append(f"{k}=?")
-        values.append(v)
+    for key, value in kwargs.items():
+        fields.append(f"{key}=?")
+        values.append(value)
 
     fields.append("updated_at=?")
-    values.append(datetime.now().isoformat())
+    values.append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     values.append(work_order_id)
 
@@ -87,151 +172,293 @@ def update_work_order(work_order_id, **kwargs):
     """
 
     cursor.execute(sql, values)
+
     conn.commit()
     conn.close()
+
     return True
 
 
 # ==========================================================
-# ALIASES (IMPORTANT FOR YOUR PAGES)
+# UPDATE STATUS
 # ==========================================================
 
 def update_work_order_status(work_order_id, status):
-    return update_work_order(work_order_id, status=status)
+
+    return update_work_order(
+        work_order_id,
+        status=status
+    )
 
 
 # ==========================================================
-# READ ALL
+# ASSIGN ENGINEER
 # ==========================================================
 
-def get_work_orders():
+def assign_work_order(work_order_id, engineer):
+
+    return update_work_order(
+        work_order_id,
+        assigned_to=engineer,
+        status="ASSIGNED"
+    )
+
+
+# Compatibility alias
+
+change_work_order_status = update_work_order_status
+
+
+# ==========================================================
+# DELETE WORK ORDER
+# ==========================================================
+
+def delete_work_order(work_order_id):
+
     conn = get_connection()
-    df = pd.read_sql_query("""
-        SELECT * FROM work_orders
-        ORDER BY datetime(created_at) DESC
-    """, conn)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        DELETE FROM work_orders
+        WHERE id=?
+        """,
+        (work_order_id,)
+    )
+
+    conn.commit()
     conn.close()
+
+    return True
+# ==========================================================
+# SEARCH
+# ==========================================================
+
+def search_work_orders_by_machine(machine_name):
+
+    conn = get_connection()
+
+    df = pd.read_sql_query(
+        """
+        SELECT *
+        FROM work_orders
+        WHERE machine LIKE ?
+        ORDER BY datetime(created_at) DESC
+        """,
+        conn,
+        params=(f"%{machine_name}%",)
+    )
+
+    conn.close()
+
     return df
 
 
 # ==========================================================
-# STATISTICS
+# WORK ORDER STATISTICS
 # ==========================================================
 
 def get_work_order_statistics():
-    conn = get_connection()
-    cursor = conn.cursor()
 
-    stats = {}
+    orders = get_work_orders()
 
-    cursor.execute("SELECT COUNT(*) FROM work_orders")
-    stats["total"] = cursor.fetchone()[0]
+    if orders.empty:
 
-    cursor.execute("SELECT COUNT(*) FROM work_orders WHERE status='PENDING'")
-    stats["pending"] = cursor.fetchone()[0]
+        return {
+            "total": 0,
+            "pending": 0,
+            "approved": 0,
+            "assigned": 0,
+            "in_progress": 0,
+            "completed": 0,
+            "rejected": 0
+        }
 
-    cursor.execute("SELECT COUNT(*) FROM work_orders WHERE status='APPROVED'")
-    stats["approved"] = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM work_orders WHERE status='ASSIGNED'")
-    stats["assigned"] = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM work_orders WHERE status='IN_PROGRESS'")
-    stats["in_progress"] = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM work_orders WHERE status='COMPLETED'")
-    stats["completed"] = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM work_orders WHERE status='REJECTED'")
-    stats["rejected"] = cursor.fetchone()[0]
-
-    conn.close()
-    return stats
-
-
-# ==========================================================
-# ANALYTICS HELPERS (FIXES IMPORT ERRORS)
-# ==========================================================
-
-def get_machine_failure_frequency():
-    conn = get_connection()
-    df = pd.read_sql_query("""
-        SELECT machine, COUNT(*) as count
-        FROM work_orders
-        GROUP BY machine
-        ORDER BY count DESC
-    """, conn)
-    conn.close()
-    return df
-
-
-def get_daily_work_order_trends():
-    conn = get_connection()
-    df = pd.read_sql_query("""
-        SELECT DATE(created_at) as date, COUNT(*) as count
-        FROM work_orders
-        GROUP BY DATE(created_at)
-        ORDER BY date
-    """, conn)
-    conn.close()
-    return df
-
-
-def get_ai_vs_manual_breakdown():
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT created_by, COUNT(*)
-        FROM work_orders
-        GROUP BY created_by
-    """)
-
-    rows = cursor.fetchall()
-    conn.close()
+    status = orders["status"].astype(str).str.upper()
 
     return {
-        (r[0] if r[0] else "MANUAL"): r[1]
-        for r in rows
+
+        "total": len(orders),
+
+        "pending": (status == "PENDING").sum(),
+
+        "approved": (status == "APPROVED").sum(),
+
+        "assigned": (status == "ASSIGNED").sum(),
+
+        "in_progress": (status == "IN_PROGRESS").sum(),
+
+        "completed": (status == "COMPLETED").sum(),
+
+        "rejected": (status == "REJECTED").sum()
     }
 
 
 # ==========================================================
-# AI WORK ORDER GENERATION SAFETY
+# MACHINE FAILURE FREQUENCY
 # ==========================================================
 
-def recent_ai_work_order_exists(machine, issue, minutes_window=30):
+def get_machine_failure_frequency():
+
+    orders = get_work_orders()
+
+    if orders.empty:
+
+        return pd.DataFrame(
+            columns=[
+                "machine",
+                "count"
+            ]
+        )
+
+    df = (
+        orders.groupby("machine")
+        .size()
+        .reset_index(name="count")
+        .sort_values(
+            "count",
+            ascending=False
+        )
+    )
+
+    return df
+
+
+# ==========================================================
+# DAILY WORK ORDER TRENDS
+# ==========================================================
+
+def get_daily_work_order_trends():
+
+    orders = get_work_orders()
+
+    if orders.empty:
+
+        return pd.DataFrame(
+            columns=[
+                "date",
+                "count"
+            ]
+        )
+
+    orders["date"] = pd.to_datetime(
+        orders["created_at"]
+    ).dt.date
+
+    trends = (
+        orders.groupby("date")
+        .size()
+        .reset_index(name="count")
+        .sort_values("date")
+    )
+
+    return trends
+
+
+# ==========================================================
+# AI vs MANUAL BREAKDOWN
+# ==========================================================
+
+def get_ai_vs_manual_breakdown():
+
+    orders = get_work_orders()
+
+    if orders.empty:
+
+        return {
+            "AI_SYSTEM": 0,
+            "MANUAL": 0
+        }
+
+    ai = (
+        orders["created_by"]
+        .fillna("")
+        .eq("AI_SYSTEM")
+        .sum()
+    )
+
+    manual = len(orders) - ai
+
+    return {
+        "AI_SYSTEM": int(ai),
+        "MANUAL": int(manual)
+    }
+# ==========================================================
+# AI DUPLICATE CHECK
+# ==========================================================
+
+def recent_ai_work_order_exists(
+    machine,
+    issue,
+    minutes_window=30
+):
+
     conn = get_connection()
+
+    cutoff = (
+        datetime.now() - timedelta(minutes=minutes_window)
+    ).strftime("%Y-%m-%d %H:%M:%S")
+
     cursor = conn.cursor()
 
-    time_limit = (
-        datetime.now() - timedelta(minutes=minutes_window)
-    ).isoformat()
-
-    cursor.execute("""
-        SELECT id FROM work_orders
+    cursor.execute(
+        """
+        SELECT id
+        FROM work_orders
         WHERE machine=?
         AND issue=?
         AND created_by='AI_SYSTEM'
         AND created_at>=?
-    """, (machine, issue, time_limit))
+        LIMIT 1
+        """,
+        (
+            machine,
+            issue,
+            cutoff
+        )
+    )
 
     exists = cursor.fetchone() is not None
+
     conn.close()
+
     return exists
 
 
-def create_work_order_from_prediction(machine, risk_score, sensor_data=None):
+# ==========================================================
+# CREATE WORK ORDER FROM AI PREDICTION
+# ==========================================================
 
+def create_work_order_from_prediction(
+    machine,
+    risk_score,
+    sensor_data=None
+):
+
+    # Ignore safe machines
     if risk_score < 0.70:
         return False
 
-    issue = f"AI detected failure risk ({risk_score*100:.1f}%)"
+    issue = (
+        f"AI detected possible failure "
+        f"({risk_score * 100:.1f}% risk)"
+    )
 
-    if recent_ai_work_order_exists(machine, issue):
+    # Prevent duplicates
+    if recent_ai_work_order_exists(
+        machine,
+        issue
+    ):
         return False
 
-    priority = "HIGH" if risk_score >= 0.85 else "MEDIUM"
+    if risk_score >= 0.90:
+        priority = "HIGH"
+
+    elif risk_score >= 0.80:
+        priority = "MEDIUM"
+
+    else:
+        priority = "LOW"
 
     create_work_order(
         machine=machine,
@@ -241,196 +468,151 @@ def create_work_order_from_prediction(machine, risk_score, sensor_data=None):
     )
 
     return True
-import sys
-from pathlib import Path
 
-import pandas as pd
-import streamlit as st
 
 # ==========================================================
-# PROJECT ROOT
+# PENDING WORK ORDERS
 # ==========================================================
 
-project_root = Path(__file__).resolve().parent.parent
-sys.path.append(str(project_root))
+def get_pending_work_orders():
+
+    orders = get_work_orders()
+
+    if orders.empty:
+        return orders
+
+    return orders[
+        orders["status"] == "PENDING"
+    ]
+
 
 # ==========================================================
-# IMPORTS
+# APPROVED WORK ORDERS
 # ==========================================================
 
-from components.header import show_header
-from components.sidebar import show_sidebar
-from components.footer import show_footer
+def get_approved_work_orders():
 
-from database.work_orders import (
-    get_work_orders,
-    get_work_order_statistics,
-    get_machine_failure_frequency,
-    get_daily_work_order_trends,
-    get_ai_vs_manual_breakdown,
-    search_work_orders_by_machine,
-    update_work_order_status
-)
+    orders = get_work_orders()
+
+    if orders.empty:
+        return orders
+
+    return orders[
+        orders["status"] == "APPROVED"
+    ]
+
 
 # ==========================================================
-# PAGE CONFIG
+# COMPLETED WORK ORDERS
 # ==========================================================
 
-st.set_page_config(
-    page_title="Admin Dashboard",
-    layout="wide",
-    page_icon="🏭"
-)
+def get_completed_work_orders():
 
-st.title("🏭 Admin Control Dashboard")
+    orders = get_work_orders()
 
-# ==========================================================
-# AUTH CHECK
-# ==========================================================
+    if orders.empty:
+        return orders
 
-if "user" not in st.session_state:
-    st.switch_page("app.py")
-    st.stop()
+    return orders[
+        orders["status"] == "COMPLETED"
+    ]
 
-user = st.session_state.user
-
-if user is None or user.get("role") != "Administrator":
-    st.error("Access Denied")
-    st.stop()
 
 # ==========================================================
-# HEADER
+# ASSIGNED WORK ORDERS
 # ==========================================================
 
-show_header(user, "Admin Dashboard", "System Control & Analytics")
-show_sidebar(user)
+def get_assigned_work_orders(engineer=None):
 
+    orders = get_work_orders()
+
+    if orders.empty:
+        return orders
+
+    assigned = orders[
+        orders["status"] == "ASSIGNED"
+    ]
+
+    if engineer:
+
+        assigned = assigned[
+            assigned["assigned_to"] == engineer
+        ]
+
+    return assigned
 # ==========================================================
-# LOAD DATA
-# ==========================================================
-
-stats = get_work_order_statistics()
-df = get_work_orders()
-
-# Safety fallback
-if df is None:
-    df = pd.DataFrame()
-
-# ==========================================================
-# KPI SECTION
-# ==========================================================
-
-st.subheader("📊 System Overview")
-
-c1, c2, c3, c4, c5 = st.columns(5)
-
-c1.metric("Total", stats.get("total", 0))
-c2.metric("Pending", stats.get("pending", 0))
-c3.metric("Approved", stats.get("approved", 0))
-c4.metric("In Progress", stats.get("in_progress", 0))
-c5.metric("Completed", stats.get("completed", 0))
-
-st.divider()
-
-# ==========================================================
-# ANALYTICS
+# ENGINEER WORK ORDERS
 # ==========================================================
 
-tab1, tab2, tab3 = st.tabs([
-    "📈 Trends",
-    "🔧 Machine Load",
-    "🤖 AI Breakdown"
-])
+def get_engineer_work_orders(engineer):
 
-with tab1:
-    st.subheader("Daily Work Orders")
+    orders = get_work_orders()
 
-    trends = get_daily_work_order_trends()
+    if orders.empty:
+        return orders
 
-    if not trends.empty:
-        st.line_chart(trends.set_index("date"))
-    else:
-        st.info("No trend data available")
+    if "assigned_to" not in orders.columns:
+        return pd.DataFrame(columns=orders.columns)
 
-with tab2:
-    st.subheader("Machine Frequency")
+    return orders[
+        orders["assigned_to"] == engineer
+    ]
 
-    freq = get_machine_failure_frequency()
-
-    if not freq.empty:
-        st.bar_chart(freq.set_index("machine"))
-    else:
-        st.info("No machine data available")
-
-with tab3:
-    st.subheader("AI vs Manual Work Orders")
-
-    breakdown = get_ai_vs_manual_breakdown()
-
-    if breakdown:
-        df_ai = pd.DataFrame({
-            "Source": list(breakdown.keys()),
-            "Count": list(breakdown.values())
-        })
-
-        st.bar_chart(df_ai.set_index("Source"))
-    else:
-        st.info("No AI data available")
 
 # ==========================================================
-# WORK ORDER SEARCH
+# RECENT WORK ORDERS
 # ==========================================================
 
-st.divider()
-st.subheader("🔍 Search Work Orders")
+def get_recent_work_orders(limit=10):
 
-search = st.text_input("Search by machine")
+    orders = get_work_orders()
 
-if search:
-    result = search_work_orders_by_machine(search)
-else:
-    result = df
+    if orders.empty:
+        return orders
 
-st.dataframe(result, use_container_width=True)
+    return orders.head(limit)
+
 
 # ==========================================================
-# UPDATE STATUS (FIXED DUPLICATE ID ISSUE)
+# DATABASE INFORMATION
 # ==========================================================
 
-st.divider()
-st.subheader("⚙ Update Work Order")
+def work_order_count():
 
-if not df.empty:
+    return len(get_work_orders())
 
-    order_id = st.selectbox(
-        "Select Work Order ID",
-        df["id"].tolist(),
-        key="admin_order_select"
+
+# ==========================================================
+# RESET DATABASE (OPTIONAL)
+# ==========================================================
+
+def delete_all_work_orders():
+
+    conn = get_connection()
+
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "DELETE FROM work_orders"
     )
 
-    new_status = st.selectbox(
-        "New Status",
-        ["PENDING", "APPROVED", "IN_PROGRESS", "COMPLETED", "REJECTED"],
-        key="admin_status_select"
-    )
+    conn.commit()
+    conn.close()
 
-    if st.button("Update Status", key="admin_update_btn"):
-
-        update_work_order_status(order_id, new_status)
-        st.success("Updated successfully")
-        st.rerun()
 
 # ==========================================================
-# FULL TABLE
+# COMPATIBILITY ALIASES
 # ==========================================================
 
-st.divider()
-st.subheader("📋 All Work Orders")
+change_work_order_status = update_work_order_status
 
-st.dataframe(df, use_container_width=True)
+assign_engineer = assign_work_order
+
+get_all_work_orders = get_work_orders
+
 
 # ==========================================================
-# FOOTER
+# INITIALIZE DATABASE
 # ==========================================================
 
-show_footer()
+create_work_orders_table()
