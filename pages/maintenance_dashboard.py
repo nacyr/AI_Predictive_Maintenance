@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-from datetime import datetime
 
 import pandas as pd
 import streamlit as st
@@ -22,13 +21,12 @@ from components.sidebar import show_sidebar
 from components.footer import show_footer
 
 from database.work_orders import (
-    get_all_work_orders,
-    assign_work_order,
-    change_work_order_status
+    get_work_orders,
+    update_work_order_status,
 )
 
 from utils.simulator import generate_sensor_data
-from ml.smart_maintenance_engine import predict_failure
+from ml.predict import predict_failure
 
 # ==========================================================
 # PAGE CONFIG
@@ -40,10 +38,13 @@ st.set_page_config(
     layout="wide"
 )
 
-st_autorefresh(interval=10000, key="engineer_refresh")
+st_autorefresh(
+    interval=10000,
+    key="engineer_dashboard_refresh"
+)
 
 # ==========================================================
-# SESSION CHECK
+# SESSION
 # ==========================================================
 
 if "user" not in st.session_state:
@@ -56,22 +57,52 @@ user = st.session_state.user
 # HEADER
 # ==========================================================
 
-show_header(user, "🔧 Engineer Dashboard", "Diagnostics Center")
+show_header(
+    user,
+    "🔧 Engineer Dashboard",
+    "Maintenance Diagnostics Center"
+)
+
 show_sidebar(user)
 
 # ==========================================================
-# DATA
+# LOAD DATA
 # ==========================================================
 
-orders = get_all_work_orders()
+try:
+    orders = get_work_orders()
+except Exception:
+    orders = pd.DataFrame()
+
+# ==========================================================
+# KPI
+# ==========================================================
 
 st.subheader("📊 Work Order Overview")
 
-col1, col2, col3 = st.columns(3)
+total = len(orders)
 
-col1.metric("Total", len(orders))
-col2.metric("Pending", (orders["status"] == "PENDING").sum() if not orders.empty else 0)
-col3.metric("Completed", (orders["status"] == "COMPLETED").sum() if not orders.empty else 0)
+pending = (
+    (orders["status"] == "PENDING").sum()
+    if not orders.empty else 0
+)
+
+approved = (
+    (orders["status"] == "APPROVED").sum()
+    if not orders.empty else 0
+)
+
+completed = (
+    (orders["status"] == "COMPLETED").sum()
+    if not orders.empty else 0
+)
+
+k1, k2, k3, k4 = st.columns(4)
+
+k1.metric("Total", total)
+k2.metric("Pending", pending)
+k3.metric("Approved", approved)
+k4.metric("Completed", completed)
 
 st.divider()
 
@@ -79,15 +110,21 @@ st.divider()
 # LIVE MACHINE MONITORING
 # ==========================================================
 
-machines = ["Pump A1", "Compressor B2", "Motor C3"]
+machines = [
+    "Pump A1",
+    "Compressor B2",
+    "Generator C3",
+    "Motor D4",
+    "Cooling Unit E5"
+]
 
 records = []
 
-for m in machines:
+for machine in machines:
 
     sensor = generate_sensor_data()
 
-    _, risk = predict_failure(
+    prediction, probability = predict_failure(
         sensor["temperature"],
         sensor["pressure"],
         sensor["vibration"],
@@ -97,42 +134,122 @@ for m in machines:
     )
 
     records.append({
-        "Machine": m,
-        "Temp": sensor["temperature"],
-        "Pressure": sensor["pressure"],
-        "Vibration": sensor["vibration"],
-        "Risk (%)": round(risk * 100, 2)
+        "Machine": machine,
+        "Temperature (°C)": round(sensor["temperature"], 2),
+        "Pressure (bar)": round(sensor["pressure"], 2),
+        "Vibration": round(sensor["vibration"], 2),
+        "Current (A)": round(sensor["current"], 2),
+        "RPM": int(sensor["rpm"]),
+        "Prediction": "Failure" if prediction else "Normal",
+        "Risk (%)": round(probability * 100, 2)
     })
 
-df = pd.DataFrame(records)
+machine_df = pd.DataFrame(records)
 
-st.subheader("🤖 AI Monitoring")
-st.dataframe(df, use_container_width=True)
+st.subheader("🤖 AI Machine Monitoring")
 
-st.bar_chart(df.set_index("Machine")["Risk (%)"])
+st.dataframe(
+    machine_df,
+    width="stretch",
+    hide_index=True
+)
+
+st.bar_chart(
+    machine_df.set_index("Machine")["Risk (%)"]
+)
 
 st.divider()
 
 # ==========================================================
-# WORK ORDER UPDATE (FIX DUPLICATE IDS)
+# HIGH RISK MACHINES
 # ==========================================================
 
-st.subheader("🛠 Update Work Orders")
+st.subheader("🚨 High Risk Machines")
+
+high_risk = machine_df[
+    machine_df["Risk (%)"] >= 70
+]
+
+if high_risk.empty:
+
+    st.success("No critical machines detected.")
+
+else:
+
+    st.error(
+        f"{len(high_risk)} machine(s) require immediate maintenance."
+    )
+
+    st.dataframe(
+        high_risk,
+        width="stretch",
+        hide_index=True
+    )
+
+st.divider()
+
+# ==========================================================
+# WORK ORDERS
+# ==========================================================
+
+st.subheader("📋 Work Orders")
+
+if orders.empty:
+
+    st.info("No work orders available.")
+
+else:
+
+    st.dataframe(
+        orders,
+        width="stretch",
+        hide_index=True
+    )
+
+st.divider()
+
+# ==========================================================
+# UPDATE STATUS
+# ==========================================================
 
 if not orders.empty:
 
-    order_id = st.selectbox("Select Work Order", orders["id"].tolist())
+    st.subheader("🛠 Update Work Order Status")
 
-    new_status = st.selectbox(
-        "Status",
-        ["PENDING", "APPROVED", "COMPLETED", "REJECTED"]
+    order_id = st.selectbox(
+        "Work Order ID",
+        orders["id"].tolist(),
+        key="engineer_order"
     )
 
-    if st.button("Update Status"):
+    new_status = st.selectbox(
+        "New Status",
+        [
+            "PENDING",
+            "APPROVED",
+            "ASSIGNED",
+            "IN_PROGRESS",
+            "COMPLETED",
+            "REJECTED"
+        ],
+        key="engineer_status"
+    )
 
-        change_work_order_status(order_id, new_status)
-        st.success("Updated successfully")
+    if st.button(
+        "Update Status",
+        key="engineer_update"
+    ):
+
+        update_work_order_status(
+            order_id,
+            new_status
+        )
+
+        st.success("Work order updated successfully.")
+
         st.rerun()
+
+st.divider()
 
 # ==========================================================
 # FOOTER
