@@ -2,7 +2,7 @@ import streamlit as st
 from auth.users import verify_user
 
 # ==========================================================
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # ==========================================================
 
 st.set_page_config(
@@ -13,17 +13,23 @@ st.set_page_config(
 )
 
 # ==========================================================
-# INITIALIZE SESSION
+# SESSION
 # ==========================================================
 
 if "user" not in st.session_state:
-    st.session_state.user = None
+    st.session_state.user = {}
 
 # ==========================================================
-# ROLE ROUTING
+# ROUTING
 # ==========================================================
 
-def route_user(user):
+def route_user():
+
+    user = st.session_state.get("user", {})
+
+    if not isinstance(user, dict):
+        st.session_state.user = {}
+        return
 
     role = user.get("role", "")
 
@@ -32,7 +38,7 @@ def route_user(user):
         "Maintenance Engineer": "pages/maintenance_dashboard.py",
         "Operations Engineer": "pages/operations_dashboard.py",
         "Supervisor": "pages/supervisor_dashboard.py",
-        "Guest": "pages/guest_dashboard.py"
+        "Guest": "pages/guest_dashboard.py",
     }
 
     page = routes.get(role)
@@ -40,32 +46,35 @@ def route_user(user):
     if page:
         st.switch_page(page)
 
-    st.error(f"Unknown user role: {role}")
-    st.session_state.user = None
-    st.stop()
-
+    st.error("Unknown user role.")
+    st.session_state.user = {}
 
 # ==========================================================
 # AUTO LOGIN
 # ==========================================================
 
-if st.session_state.user is not None:
-    route_user(st.session_state.user)
+if (
+    isinstance(st.session_state.user, dict)
+    and st.session_state.user.get("role")
+):
+    route_user()
     st.stop()
 
 # ==========================================================
-# PAGE HEADER
+# HEADER
 # ==========================================================
 
 st.title("🏭 Industrial AI Predictive Maintenance")
 
-st.markdown("""
+st.markdown(
+"""
 ### Enterprise Authentication Portal
 
-Welcome to the **Industrial AI Predictive Maintenance System**.
+Welcome to the Industrial AI Predictive Maintenance System.
 
-Please sign in with your authorized enterprise credentials to access your dashboard.
-""")
+Please sign in using your enterprise credentials.
+"""
+)
 
 st.divider()
 
@@ -73,46 +82,61 @@ st.divider()
 # LOGIN FORM
 # ==========================================================
 
-with st.form("login_form", clear_on_submit=False):
+with st.form("login_form"):
 
     username = st.text_input(
         "Username",
-        placeholder="Enter your username"
+        placeholder="Enter username"
     )
 
     password = st.text_input(
         "Password",
         type="password",
-        placeholder="Enter your password"
+        placeholder="Enter password"
     )
 
-    login = st.form_submit_button(
+    submit = st.form_submit_button(
         "🔐 Sign In",
         use_container_width=True
     )
 
 # ==========================================================
-# LOGIN PROCESS
+# LOGIN
 # ==========================================================
 
-if login:
+if submit:
 
-    username = username.strip()
+    if not username.strip() or not password:
 
-    if username == "" or password == "":
-
-        st.warning("Please enter both username and password.")
+        st.warning("Please enter username and password.")
 
     else:
 
-        user = verify_user(username, password)
+        user = verify_user(
+            username.strip(),
+            password
+        )
 
         if user:
 
-            st.session_state.user = user
+            # ------------------------------------------
+            # ALWAYS STORE AS DICTIONARY
+            # ------------------------------------------
+
+            if isinstance(user, dict):
+
+                st.session_state.user = {
+                    "username": user.get("username", ""),
+                    "fullname": user.get("fullname", user.get("username", "User")),
+                    "role": user.get("role", "")
+                }
+
+            else:
+                st.error("Invalid user record.")
+                st.stop()
 
             with st.spinner("Signing in..."):
-                route_user(user)
+                route_user()
 
         else:
 
@@ -126,49 +150,51 @@ st.divider()
 
 with st.expander("👥 Demo Accounts"):
 
-    st.table({
-        "Username": [
-            "admin",
-            "maintenance",
-            "operations",
-            "supervisor",
-            "guest"
-        ],
-        "Password": [
-            "admin123",
-            "maint123",
-            "ops123",
-            "super123",
-            "guest123"
-        ],
-        "Role": [
-            "Administrator",
-            "Maintenance Engineer",
-            "Operations Engineer",
-            "Supervisor",
-            "Guest"
-        ]
-    })
+    st.table(
+        {
+            "Username": [
+                "admin",
+                "maintenance",
+                "operations",
+                "supervisor",
+                "guest",
+            ],
+            "Password": [
+                "admin123",
+                "maint123",
+                "ops123",
+                "super123",
+                "guest123",
+            ],
+            "Role": [
+                "Administrator",
+                "Maintenance Engineer",
+                "Operations Engineer",
+                "Supervisor",
+                "Guest",
+            ],
+        }
+    )
 
 # ==========================================================
-# SYSTEM INFORMATION
+# SYSTEM INFO
 # ==========================================================
 
 with st.expander("ℹ️ System Information"):
 
-    st.markdown("""
+    st.markdown(
+"""
 ### Features
 
 - 🤖 AI Failure Prediction
-- 🏭 Live Industrial Monitoring
+- 🏭 Live Plant Monitoring
 - 📊 Predictive Analytics
 - 🛠 Smart Maintenance Scheduling
-- 👥 Multi-Role Access Control
-- 📈 Historical Performance Reports
-- 🔒 Secure Enterprise Authentication
-
-Each user is automatically redirected to their assigned dashboard after successful authentication.
-""")
+- 👥 Multi-role Access
+- 📈 Historical Reports
+- 🔒 Secure Authentication
+"""
+)
 
 # ==========================================================
 # FOOTER
@@ -177,5 +203,5 @@ Each user is automatically redirected to their assigned dashboard after successf
 st.divider()
 
 st.caption(
-    "Industrial AI Predictive Maintenance System • Enterprise Edition v2.0 • Powered by Streamlit & Machine Learning"
+    "Industrial AI Predictive Maintenance System • Enterprise Edition"
 )

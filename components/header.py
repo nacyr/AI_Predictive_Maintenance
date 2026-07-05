@@ -2,14 +2,21 @@ import streamlit as st
 from datetime import datetime
 
 
+# ==========================================================
+# HEADER
+# ==========================================================
+
 def show_header(user, title, subtitle=""):
 
-    if user is None:
+    # --------------------------------------------
+    # Safe user extraction
+    # --------------------------------------------
+
+    if not isinstance(user, dict):
         user = {}
 
-    full_name = (
+    fullname = (
         user.get("fullname")
-        or user.get("full_name")
         or user.get("name")
         or user.get("username")
         or "User"
@@ -17,23 +24,41 @@ def show_header(user, title, subtitle=""):
 
     role = user.get("role", "Unknown")
 
+    now = datetime.now()
+
+    # --------------------------------------------
+    # Title
+    # --------------------------------------------
+
     st.title(title)
 
     if subtitle:
         st.caption(subtitle)
 
-    col1, col2, col3 = st.columns(3)
+    st.divider()
 
-    with col1:
-        st.metric("User", full_name)
+    # --------------------------------------------
+    # Information cards
+    # --------------------------------------------
 
-    with col2:
-        st.metric("Role", role)
+    c1, c2, c3 = st.columns(3)
 
-    with col3:
+    with c1:
+        st.metric(
+            "User",
+            fullname
+        )
+
+    with c2:
+        st.metric(
+            "Role",
+            role
+        )
+
+    with c3:
         st.metric(
             "Time",
-            datetime.now().strftime("%d %b %Y %H:%M:%S")
+            now.strftime("%d %b %Y %H:%M:%S")
         )
 
     st.divider()

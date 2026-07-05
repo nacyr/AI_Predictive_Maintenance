@@ -1,34 +1,56 @@
 import streamlit as st
 
 
+# ==========================================================
+# SIDEBAR
+# ==========================================================
+
 def show_sidebar(user):
 
-    if user is None:
+    if not isinstance(user, dict):
         user = {}
 
-    full_name = (
+    fullname = (
         user.get("fullname")
-        or user.get("full_name")
         or user.get("name")
         or user.get("username")
         or "User"
     )
 
-    username = user.get("username", "-")
     role = user.get("role", "Unknown")
 
     with st.sidebar:
 
-        st.title("🏭 Navigation")
+        st.title("🏭 AI Predictive Maintenance")
 
         st.divider()
 
-        st.subheader("Current User")
-
-        st.write(f"**Name:** {full_name}")
-        st.write(f"**Username:** {username}")
+        st.write(f"**User:** {fullname}")
         st.write(f"**Role:** {role}")
 
         st.divider()
 
-        st.success("System Status: Online")
+        st.subheader("Navigation")
+
+        pages = [
+            ("🏠 Admin Dashboard", "pages/admin_dashboard.py"),
+            ("🔧 Maintenance", "pages/maintenance_dashboard.py"),
+            ("⚙️ Operations", "pages/operations_dashboard.py"),
+            ("👤 Guest", "pages/guest_dashboard.py"),
+            ("📊 Analytics", "pages/analytics.py"),
+            ("🤖 Prediction", "pages/prediction.py"),
+            ("🛠 Work Orders", "pages/maintenance_work_orders.py"),
+        ]
+
+        for label, page in pages:
+            if st.button(label, use_container_width=True):
+                st.switch_page(page)
+
+        st.divider()
+
+        if st.button(
+            "🚪 Logout",
+            use_container_width=True
+        ):
+            st.session_state.user = {}
+            st.switch_page("app.py")
