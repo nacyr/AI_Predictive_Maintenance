@@ -47,11 +47,12 @@ if "user" not in st.session_state:
     st.switch_page("app.py")
     st.stop()
 
-user = st.session_state.user
+user = st.session_state.get("user", {})
 
-# ==========================================================
-# ROLE CHECK
-# ==========================================================
+if not isinstance(user, dict):
+    user = {}
+
+role = user.get("role", "")
 
 allowed_roles = [
     "Administrator",
@@ -60,7 +61,7 @@ allowed_roles = [
     "Operations Engineer"
 ]
 
-if user["role"] not in allowed_roles:
+if role not in allowed_roles:
     st.error("Access Denied.")
     st.stop()
 
