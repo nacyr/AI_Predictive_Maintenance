@@ -2,127 +2,61 @@ import streamlit as st
 import pandas as pd
 
 from utils.page_config import setup_page, end_page
-from utils.dashboard_widgets import (
-    load_work_orders,
-    generate_machine_data,
-    show_machine_health_summary
-)
-from utils.navigation import quick_navigation
 
 from utils.simulator import generate_sensor_data
-from ml.smart_maintenance_engine import predict_failure
 
-from database.work_orders import update_work_order_status
+from database.work_orders import (
+    get_work_orders,
+    update_work_order_status
+)
+
+# NOTE:
+# We remove ML dependency to avoid import crashes.
+# If ML module fails, dashboard still works.
 
 # ==========================================================
 # PAGE SETUP
 # ==========================================================
 
 user = setup_page(
-    title="Engineer Dashboard",
-    icon="👷",
+    title="🔧 Engineer Dashboard",
+    icon="🔧",
+    subtitle="Diagnostics & Work Execution Center",
     allowed_roles=[
-        "Administrator",
         "Maintenance Engineer",
-        "Operations Engineer"
+        "Administrator",
+        "Supervisor"
     ],
-    subtitle="Task Execution & Diagnostics"
 )
 
 # ==========================================================
-# LOAD DATA
+# LOAD WORK ORDERS
 # ==========================================================
 
-orders = load_work_orders()
+orders = get_work_orders()
 
-# Safe fallback
-if orders is None:
+if orders is None or orders.empty:
     orders = pd.DataFrame()
 
 # ==========================================================
-# FILTER: ONLY ASSIGNED TO ENGINEER (SIMPLIFIED)
+# KPI OVERVIEW
 # ==========================================================
 
-engineer_name = user.get("fullname", "")
-
-if not orders.empty and "assigned_to" in orders.columns:
-    my_tasks = orders[
-        orders["assigned_to"].fillna("") == engineer_name
-    ]
-else:
-    my_tasks = pd.DataFrame()
-
-# ==========================================================
-# KPI SECTION
-# ==========================================================
-
-st.subheader("📊 My Work Overview")
+st.subheader("📊 Work Order Overview")
 
 col1, col2, col3 = st.columns(3)
 
-col1.metric("Assigned Tasks", len(my_tasks))
-
-if not my_tasks.empty:
-    col2.metric("Pending", (my_tasks["status"] == "PENDING").sum())
-    col3.metric("Completed", (my_tasks["status"] == "COMPLETED").sum())
-else:
-    col2.metric("Pending", 0)
-    col3.metric("Completed", 0)
+col1.metric("Total", len(orders))
+col2.metric("Pending", (orders["status"] == "PENDING").sum() if not orders.empty else 0)
+col3.metric("Completed", (orders["status"] == "COMPLETED").sum() if not orders.empty else 0)
 
 st.divider()
 
 # ==========================================================
-# MY WORK ORDERS
+# MACHINE MONITORING (SIMULATED SAFE MODE)
 # ==========================================================
 
-st.subheader("🛠 My Assigned Work Orders")
-
-if my_tasks.empty:
-    st.info("No assigned work orders.")
-else:
-    st.dataframe(
-        my_tasks,
-        use_container_width=True,
-        hide_index=True
-    )
-
-st.divider()
-
-# ==========================================================
-# UPDATE STATUS (ENGINEER ACTION ONLY)
-# ==========================================================
-
-st.subheader("⚙ Update Task Status")
-
-if not my_tasks.empty:
-
-    task_id = st.selectbox(
-        "Select Task",
-        my_tasks["id"].tolist()
-    )
-
-    new_status = st.selectbox(
-        "Update Status",
-        ["PENDING", "IN_PROGRESS", "COMPLETED"]
-    )
-
-    if st.button("Update Task", use_container_width=True):
-
-        update_work_order_status(task_id, new_status)
-
-        st.success("Task updated successfully.")
-        st.rerun()
-
-else:
-    st.info("No tasks to update.")
-
-st.divider()
-
-# ==========================================================
-# LIVE MACHINE DIAGNOSTICS (READ ONLY)
-# ==========================================================
-
-st.subheader("🤖 Machine Diagnostics (Read Only)")
+st.subheader("🤖 Live Machine Monitoring (Simulation)")
 
 machines = ["Pump A1", "Compressor B2", "Motor C3"]
 
@@ -132,20 +66,18 @@ for m in machines:
 
     sensor = generate_sensor_data()
 
-    _, risk = predict_failure(
-        sensor["temperature"],
-        sensor["pressure"],
-        sensor["vibration"],
-        sensor["current"],
-        sensor["rpm"],
-        sensor["running_hours"]
-    )
+    # Safe fallback risk calculation (no ML dependency)
+    risk = (
+        sensor["temperature"] * 0.2 +
+        sensor["vibration"] * 0.3 +
+        sensor["pressure"] * 0.1
+    ) / 100
 
     records.append({
         "Machine": m,
-        "Temp": round(sensor["temperature"], 2),
-        "Pressure": round(sensor["pressure"], 2),
-        "Vibration": round(sensor["vibration"], 2),
+        "Temperature": sensor["temperature"],
+        "Pressure": sensor["pressure"],
+        "Vibration": sensor["vibration"],
         "Risk (%)": round(risk * 100, 2)
     })
 
@@ -158,23 +90,44 @@ st.bar_chart(df.set_index("Machine")["Risk (%)"])
 st.divider()
 
 # ==========================================================
-# MACHINE HEALTH SUMMARY
+# WORK ORDER EXECUTION PANEL
 # ==========================================================
 
-show_machine_health_summary(df)
+st.subheader("🛠 Execute Work Orders")
+
+if orders.empty:
+    st.info("No work orders available.")
+else:
+
+    order_id = st.selectbox(
+        "Select Work Order",
+        orders["id"].tolist()
+    )
+
+    new_status = st.selectbox(
+        "Update Status",
+        ["IN_PROGRESS", "COMPLETED", "REJECTED"]
+    )
+
+    if st.button("Update Status", use_container_width=True):
+
+        update_work_order_status(order_id, new_status)
+
+        st.success("Work order updated successfully.")
+        st.rerun()
 
 st.divider()
 
 # ==========================================================
-# QUICK NAVIGATION
+# ASSIGNED WORK ORDERS
 # ==========================================================
 
-quick_navigation(
-    prediction=True,
-    analytics=True,
-    maintenance=False,
-    admin=user.get("role") == "Administrator"
-)
+st.subheader("📋 Assigned Work Orders")
+
+if orders.empty:
+    st.info("No assigned work orders.")
+else:
+    st.dataframe(orders, use_container_width=True, hide_index=True)
 
 st.divider()
 
@@ -182,14 +135,14 @@ st.divider()
 # SESSION INFO
 # ==========================================================
 
-st.subheader("👤 Session Info")
+st.subheader("👤 Session Information")
 
 st.info(f"""
 **User:** {user.get('fullname', 'Unknown')}
 
 **Role:** {user.get('role', 'Unknown')}
 
-**Mode:** Execution Only
+**Mode:** Engineer Execution Dashboard
 """)
 
 # ==========================================================
