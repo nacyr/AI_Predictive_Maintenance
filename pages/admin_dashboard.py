@@ -2,7 +2,7 @@ from pathlib import Path
 import sys
 
 # ==========================================================
-# FORCE PROJECT ROOT (STREAMLIT CLOUD SAFE)
+# SAFE PROJECT ROOT (STREAMLIT CLOUD FIX)
 # ==========================================================
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -12,7 +12,7 @@ import streamlit as st
 import pandas as pd
 
 # ==========================================================
-# SAFE IMPORT (MODULE ALIAS STYLE - BEST FOR STREAMLIT CLOUD)
+# SAFE IMPORT (MODULE STYLE)
 # ==========================================================
 
 try:
@@ -41,7 +41,7 @@ try:
     stats = wo.get_work_order_statistics()
     df_all = wo.get_all_work_orders()
 except Exception as e:
-    st.error("❌ Failed to load data from database")
+    st.error("❌ Database loading error")
     st.code(str(e))
     st.stop()
 
@@ -77,7 +77,7 @@ with tab1:
     if df_all is not None and not df_all.empty:
         st.dataframe(df_all.head(10), use_container_width=True)
     else:
-        st.info("No work orders available.")
+        st.info("No work orders available")
 
 # ==========================================================
 # TAB 2 — WORK ORDERS
@@ -86,7 +86,7 @@ with tab1:
 with tab2:
     st.subheader("Work Orders Management")
 
-    search = st.text_input("Search by machine name")
+    search = st.text_input("Search by machine name", key="search_machine")
 
     if search:
         data = wo.search_work_orders_by_machine(search)
@@ -96,7 +96,7 @@ with tab2:
     if data is not None and not data.empty:
         st.dataframe(data, use_container_width=True)
     else:
-        st.info("No matching records found.")
+        st.info("No records found")
 
 # ==========================================================
 # TAB 3 — CONTROL PANEL
@@ -113,10 +113,19 @@ with tab3:
     with col1:
         st.markdown("### Assign Engineer")
 
-        work_id = st.number_input("Work Order ID", min_value=1, step=1)
-        engineer = st.text_input("Engineer Name")
+        work_id = st.number_input(
+            "Work Order ID",
+            min_value=1,
+            step=1,
+            key="assign_work_id"
+        )
 
-        if st.button("Assign Engineer"):
+        engineer = st.text_input(
+            "Engineer Name",
+            key="assign_engineer_name"
+        )
+
+        if st.button("Assign Engineer", key="assign_btn"):
             if engineer.strip():
                 wo.assign_work_order(work_id, engineer.strip())
                 st.success("Engineer assigned successfully")
@@ -130,14 +139,20 @@ with tab3:
     with col2:
         st.markdown("### Update Status")
 
-        status_id = st.number_input("Work Order ID", min_value=1, step=1)
+        status_id = st.number_input(
+            "Work Order ID",
+            min_value=1,
+            step=1,
+            key="status_work_id"
+        )
 
         status = st.selectbox(
             "Status",
-            ["PENDING", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "REJECTED"]
+            ["PENDING", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "REJECTED"],
+            key="status_select"
         )
 
-        if st.button("Update Status"):
+        if st.button("Update Status", key="status_btn"):
             wo.change_work_order_status(status_id, status)
             st.success("Status updated successfully")
             st.rerun()
