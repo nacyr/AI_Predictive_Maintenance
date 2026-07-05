@@ -3,61 +3,70 @@ from pathlib import Path
 import pandas as pd
 
 # ==========================================================
-# DATABASE PATH
+# DATABASE CONFIGURATION
 # ==========================================================
 
 DB_PATH = Path(__file__).resolve().parent / "maintenance.db"
 
 # ==========================================================
-# CONNECTION
+# DATABASE CONNECTION
 # ==========================================================
 
 def get_connection():
+    """
+    Returns a connection to the prediction database.
+    """
+
     return sqlite3.connect(DB_PATH)
+
 
 # ==========================================================
 # CREATE TABLE
 # ==========================================================
 
 def create_predictions_table():
+    """
+    Creates the predictions table if it does not exist.
+    """
 
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS predictions(
+        CREATE TABLE IF NOT EXISTS predictions(
 
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-        timestamp TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
 
-        machine TEXT NOT NULL,
+            machine TEXT NOT NULL,
 
-        temperature REAL,
+            temperature REAL,
 
-        pressure REAL,
+            pressure REAL,
 
-        vibration REAL,
+            vibration REAL,
 
-        current REAL,
+            current REAL,
 
-        rpm INTEGER,
+            rpm INTEGER,
 
-        running_hours INTEGER,
+            running_hours INTEGER,
 
-        failure_probability REAL,
+            failure_probability REAL,
 
-        machine_health REAL,
+            machine_health REAL,
 
-        remaining_life INTEGER,
+            remaining_life INTEGER,
 
-        recommendation TEXT
+            recommendation TEXT
 
-    )
+        )
     """)
 
     conn.commit()
     conn.close()
+
 
 # ==========================================================
 # SAVE PREDICTION
@@ -77,11 +86,15 @@ def save_prediction(
     remaining_life,
     recommendation
 ):
+    """
+    Saves an AI prediction into the database.
+    """
 
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
+
         INSERT INTO predictions(
 
             timestamp,
@@ -98,7 +111,10 @@ def save_prediction(
             recommendation
 
         )
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+
+        VALUES(
+            ?,?,?,?,?,?,?,?,?,?,?,?
+        )
 
     """, (
 
@@ -120,11 +136,15 @@ def save_prediction(
     conn.commit()
     conn.close()
 
+
 # ==========================================================
 # GET ALL PREDICTIONS
 # ==========================================================
 
 def get_predictions():
+    """
+    Returns every prediction ordered from newest to oldest.
+    """
 
     conn = get_connection()
 
@@ -142,11 +162,15 @@ def get_predictions():
 
     return df
 
+
 # ==========================================================
 # GET SINGLE PREDICTION
 # ==========================================================
 
 def get_prediction(prediction_id):
+    """
+    Returns a single prediction by ID.
+    """
 
     conn = get_connection()
 
@@ -164,11 +188,15 @@ def get_prediction(prediction_id):
 
     return df
 
+
 # ==========================================================
-# SEARCH PREDICTIONS
+# SEARCH BY MACHINE
 # ==========================================================
 
 def search_predictions(machine):
+    """
+    Searches prediction history by machine name.
+    """
 
     conn = get_connection()
 
@@ -187,12 +215,15 @@ def search_predictions(machine):
     conn.close()
 
     return df
-
 # ==========================================================
 # HIGH RISK PREDICTIONS
 # ==========================================================
 
 def high_risk_predictions(threshold=70):
+    """
+    Returns predictions whose failure probability is
+    greater than or equal to the specified threshold.
+    """
 
     conn = get_connection()
 
@@ -211,11 +242,16 @@ def high_risk_predictions(threshold=70):
     conn.close()
 
     return df
+
+
 # ==========================================================
 # RECENT PREDICTIONS
 # ==========================================================
 
-def recent_predictions(limit=10):
+def get_latest_predictions(limit=10):
+    """
+    Returns the most recent predictions.
+    """
 
     conn = get_connection()
 
@@ -237,10 +273,13 @@ def recent_predictions(limit=10):
 
 
 # ==========================================================
-# FILTER BY DATE
+# FILTER PREDICTIONS BY DATE
 # ==========================================================
 
 def predictions_between(start_date, end_date):
+    """
+    Returns predictions between two dates.
+    """
 
     conn = get_connection()
 
@@ -250,8 +289,8 @@ def predictions_between(start_date, end_date):
 
         FROM predictions
 
-        WHERE date(timestamp)
-        BETWEEN date(?) AND date(?)
+        WHERE DATE(timestamp)
+        BETWEEN DATE(?) AND DATE(?)
 
         ORDER BY id DESC
 
@@ -267,15 +306,20 @@ def predictions_between(start_date, end_date):
 # ==========================================================
 
 def delete_prediction(prediction_id):
+    """
+    Deletes a prediction by ID.
+    """
 
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
 
-        DELETE FROM predictions
+        DELETE
 
-        WHERE id=?
+        FROM predictions
+
+        WHERE id = ?
 
     """, (prediction_id,))
 
@@ -284,17 +328,22 @@ def delete_prediction(prediction_id):
 
 
 # ==========================================================
-# CLEAR ALL PREDICTIONS
+# CLEAR PREDICTION HISTORY
 # ==========================================================
 
 def clear_predictions():
+    """
+    Deletes every prediction from the database.
+    """
 
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
 
-        DELETE FROM predictions
+        DELETE
+
+        FROM predictions
 
     """)
 
@@ -307,6 +356,9 @@ def clear_predictions():
 # ==========================================================
 
 def total_predictions():
+    """
+    Returns the total number of predictions.
+    """
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -324,13 +376,14 @@ def total_predictions():
     conn.close()
 
     return total
-
-
 # ==========================================================
 # AVERAGE FAILURE PROBABILITY
 # ==========================================================
 
 def average_failure_probability():
+    """
+    Returns the average failure probability.
+    """
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -355,6 +408,9 @@ def average_failure_probability():
 # ==========================================================
 
 def average_machine_health():
+    """
+    Returns the average machine health score.
+    """
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -375,18 +431,75 @@ def average_machine_health():
 
 
 # ==========================================================
-# DATABASE INFORMATION
+# MACHINE STATISTICS
 # ==========================================================
 
-def database_statistics():
+def machine_statistics():
+    """
+    Returns the number of predictions recorded
+    for each machine.
+    """
+
+    conn = get_connection()
+
+    df = pd.read_sql_query("""
+
+        SELECT
+
+            machine,
+
+            COUNT(*) AS total_predictions,
+
+            AVG(failure_probability) AS average_failure_probability,
+
+            AVG(machine_health) AS average_machine_health
+
+        FROM predictions
+
+        GROUP BY machine
+
+        ORDER BY machine
+
+    """, conn)
+
+    conn.close()
+
+    return df
+
+
+# ==========================================================
+# DATABASE SUMMARY
+# ==========================================================
+
+def database_summary():
+    """
+    Returns summary statistics for the prediction database.
+    """
 
     return {
 
         "total_predictions": total_predictions(),
-        "average_failure_probability": average_failure_probability(),
-        "average_machine_health": average_machine_health()
+
+        "average_failure_probability":
+            average_failure_probability(),
+
+        "average_machine_health":
+            average_machine_health()
 
     }
+
+
+# ==========================================================
+# EXPORT PREDICTIONS
+# ==========================================================
+
+def export_predictions():
+    """
+    Returns all prediction records as a DataFrame.
+    Useful for CSV export.
+    """
+
+    return get_predictions()
 
 
 # ==========================================================

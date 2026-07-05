@@ -1,0 +1,280 @@
+import sys
+from pathlib import Path
+from datetime import datetime
+
+import streamlit as st
+import pandas as pd
+from streamlit_autorefresh import st_autorefresh
+
+# ==========================================================
+# PROJECT ROOT
+# ==========================================================
+
+project_root = Path(__file__).resolve().parent.parent
+sys.path.append(str(project_root))
+
+# ==========================================================
+# IMPORTS
+# ==========================================================
+
+from components.header import show_header
+from components.sidebar import show_sidebar
+from components.footer import show_footer
+
+from database.work_orders import (
+    get_work_orders,
+    update_work_order_status,
+    delete_work_order
+)
+
+# ==========================================================
+# PAGE CONFIG
+# ==========================================================
+
+st.set_page_config(
+    page_title="Maintenance Work Orders",
+    page_icon="🛠",
+    layout="wide"
+)
+
+# ==========================================================
+# AUTO REFRESH
+# ==========================================================
+
+st_autorefresh(
+    interval=10000,
+    key="work_orders_refresh"
+)
+
+# ==========================================================
+# LOGIN
+# ==========================================================
+
+if "user" not in st.session_state:
+    st.warning("Please login first.")
+    st.switch_page("app.py")
+    st.stop()
+
+user = st.session_state.user
+
+# ==========================================================
+# ROLE CHECK
+# ==========================================================
+
+allowed_roles = [
+    "Administrator",
+    "Supervisor",
+    "Maintenance Engineer",
+    "Operations Engineer"
+]
+
+if user["role"] not in allowed_roles:
+    st.error("Access Denied.")
+    st.stop()
+
+# ==========================================================
+# HEADER
+# ==========================================================
+
+show_header(
+    user,
+    "🛠 Maintenance Work Orders",
+    "Enterprise Maintenance Management"
+)
+
+show_sidebar(user)
+
+# ==========================================================
+# LOAD DATABASE
+# ==========================================================
+
+orders = get_work_orders()
+
+# ==========================================================
+# KPI
+# ==========================================================
+
+st.subheader("📊 Work Order Overview")
+
+if orders.empty:
+
+    total = pending = approved = completed = rejected = 0
+
+else:
+
+    total = len(orders)
+    pending = (orders["status"] == "PENDING").sum()
+    approved = (orders["status"] == "APPROVED").sum()
+    completed = (orders["status"] == "COMPLETED").sum()
+    rejected = (orders["status"] == "REJECTED").sum()
+
+c1, c2, c3, c4, c5 = st.columns(5)
+
+c1.metric("Total", total)
+c2.metric("Pending", pending)
+c3.metric("Approved", approved)
+c4.metric("Completed", completed)
+c5.metric("Rejected", rejected)
+
+st.divider()
+
+# ==========================================================
+# SEARCH
+# ==========================================================
+
+left, right = st.columns(2)
+
+with left:
+
+    search = st.text_input(
+        "🔍 Search Machine"
+    )
+
+with right:
+
+    status = st.selectbox(
+        "Filter Status",
+        ["ALL"] +
+        (
+            sorted(orders["status"].unique())
+            if not orders.empty
+            else []
+        )
+    )
+
+filtered = orders.copy()
+
+if not filtered.empty:
+
+    if search:
+
+        filtered = filtered[
+            filtered["machine"]
+            .str.contains(search,
+            case=False,
+            na=False)
+        ]
+
+    if status != "ALL":
+
+        filtered = filtered[
+            filtered["status"] == status
+        ]
+
+# ==========================================================
+# TABLE
+# ==========================================================
+
+st.subheader("📋 Work Orders")
+
+if filtered.empty:
+
+    st.info("No work orders found.")
+
+else:
+
+    st.dataframe(
+        filtered,
+        width="stretch",
+        hide_index=True
+    )
+
+st.divider()
+
+# ==========================================================
+# UPDATE
+# ==========================================================
+
+if (
+    user["role"] in
+    ["Administrator", "Supervisor"]
+    and not orders.empty
+):
+
+    st.subheader("⚙ Update Status")
+
+    selected = st.selectbox(
+        "Work Order",
+        orders["id"]
+    )
+
+    new_status = st.selectbox(
+        "Status",
+        [
+            "PENDING",
+            "APPROVED",
+            "COMPLETED",
+            "REJECTED"
+        ]
+    )
+
+    if st.button(
+        "Update",
+        width="stretch"
+    ):
+
+        update_work_order_status(
+            selected,
+            new_status
+        )
+
+        st.success("Status updated.")
+
+        st.rerun()
+
+# ==========================================================
+# DELETE
+# ==========================================================
+
+if (
+    user["role"] == "Administrator"
+    and not orders.empty
+):
+
+    st.divider()
+
+    st.subheader("🗑 Delete Work Order")
+
+    delete_id = st.selectbox(
+        "Select Work Order",
+        orders["id"],
+        key="delete"
+    )
+
+    if st.button(
+        "Delete",
+        width="stretch"
+    ):
+
+        delete_work_order(delete_id)
+
+        st.success("Deleted successfully.")
+
+        st.rerun()
+
+# ==========================================================
+# CHART
+# ==========================================================
+
+st.divider()
+
+st.subheader("📈 Status Distribution")
+
+if not orders.empty:
+
+    chart = (
+        orders["status"]
+        .value_counts()
+    )
+
+    st.bar_chart(chart)
+
+else:
+
+    st.info("Nothing to display.")
+
+# ==========================================================
+# FOOTER
+# ==========================================================
+
+show_footer()
