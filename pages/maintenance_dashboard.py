@@ -1,198 +1,110 @@
-import sys
-from pathlib import Path
-
-import pandas as pd
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
+import pandas as pd
 
-# ==========================================================
-# PROJECT ROOT
-# ==========================================================
-
-project_root = Path(__file__).resolve().parent.parent
-sys.path.append(str(project_root))
-
-# ==========================================================
-# IMPORTS
-# ==========================================================
-
-from components.header import show_header
-from components.sidebar import show_sidebar
-from components.footer import show_footer
+from utils.page_config import setup_page, end_page
+from utils.dashboard_widgets import (
+    load_work_orders,
+    generate_machine_data,
+    show_work_order_kpis,
+    show_machine_table
+)
+from utils.navigation import quick_navigation
 
 from database.work_orders import (
-    get_work_orders,
-    update_work_order_status,
-)
-
-from utils.simulator import generate_sensor_data
-from ml.predict import predict_failure
-
-# ==========================================================
-# PAGE CONFIG
-# ==========================================================
-
-st.set_page_config(
-    page_title="Engineer Dashboard",
-    page_icon="🔧",
-    layout="wide"
-)
-
-st_autorefresh(
-    interval=10000,
-    key="engineer_dashboard_refresh"
+    create_work_order,
+    update_work_order_status
 )
 
 # ==========================================================
-# SESSION
+# PAGE SETUP
 # ==========================================================
 
-if "user" not in st.session_state:
-    st.switch_page("app.py")
-    st.stop()
-
-user = st.session_state.user
-
-# ==========================================================
-# HEADER
-# ==========================================================
-
-show_header(
-    user,
-    "🔧 Engineer Dashboard",
-    "Maintenance Diagnostics Center"
+user = setup_page(
+    title="Maintenance Dashboard",
+    icon="🛠",
+    allowed_roles=[
+        "Administrator",
+        "Maintenance Engineer"
+    ],
+    subtitle="Maintenance Control Center"
 )
-
-show_sidebar(user)
 
 # ==========================================================
 # LOAD DATA
 # ==========================================================
 
-try:
-    orders = get_work_orders()
-except Exception:
-    orders = pd.DataFrame()
+orders = load_work_orders()
+machines = generate_machine_data()
 
 # ==========================================================
-# KPI
+# KPI SECTION
 # ==========================================================
 
-st.subheader("📊 Work Order Overview")
-
-total = len(orders)
-
-pending = (
-    (orders["status"] == "PENDING").sum()
-    if not orders.empty else 0
-)
-
-approved = (
-    (orders["status"] == "APPROVED").sum()
-    if not orders.empty else 0
-)
-
-completed = (
-    (orders["status"] == "COMPLETED").sum()
-    if not orders.empty else 0
-)
-
-k1, k2, k3, k4 = st.columns(4)
-
-k1.metric("Total", total)
-k2.metric("Pending", pending)
-k3.metric("Approved", approved)
-k4.metric("Completed", completed)
+show_work_order_kpis(orders)
 
 st.divider()
 
 # ==========================================================
-# LIVE MACHINE MONITORING
+# PLANT OVERVIEW (READ ONLY)
 # ==========================================================
 
-machines = [
-    "Pump A1",
-    "Compressor B2",
-    "Generator C3",
-    "Motor D4",
-    "Cooling Unit E5"
-]
+st.subheader("🏭 Plant Overview")
 
-records = []
-
-for machine in machines:
-
-    sensor = generate_sensor_data()
-
-    prediction, probability = predict_failure(
-        sensor["temperature"],
-        sensor["pressure"],
-        sensor["vibration"],
-        sensor["current"],
-        sensor["rpm"],
-        sensor["running_hours"]
-    )
-
-    records.append({
-        "Machine": machine,
-        "Temperature (°C)": round(sensor["temperature"], 2),
-        "Pressure (bar)": round(sensor["pressure"], 2),
-        "Vibration": round(sensor["vibration"], 2),
-        "Current (A)": round(sensor["current"], 2),
-        "RPM": int(sensor["rpm"]),
-        "Prediction": "Failure" if prediction else "Normal",
-        "Risk (%)": round(probability * 100, 2)
-    })
-
-machine_df = pd.DataFrame(records)
-
-st.subheader("🤖 AI Machine Monitoring")
-
-st.dataframe(
-    machine_df,
-    width="stretch",
-    hide_index=True
-)
-
-st.bar_chart(
-    machine_df.set_index("Machine")["Risk (%)"]
-)
+show_machine_table(machines)
 
 st.divider()
 
 # ==========================================================
-# HIGH RISK MACHINES
+# WORK ORDER CREATION (CORE FUNCTION)
 # ==========================================================
 
-st.subheader("🚨 High Risk Machines")
+st.subheader("➕ Create Work Order")
 
-high_risk = machine_df[
-    machine_df["Risk (%)"] >= 70
-]
+col1, col2 = st.columns(2)
 
-if high_risk.empty:
+with col1:
 
-    st.success("No critical machines detected.")
-
-else:
-
-    st.error(
-        f"{len(high_risk)} machine(s) require immediate maintenance."
+    machine = st.selectbox(
+        "Select Machine",
+        machines["Machine"].tolist() if not machines.empty else []
     )
 
-    st.dataframe(
-        high_risk,
-        width="stretch",
-        hide_index=True
+with col2:
+
+    priority = st.selectbox(
+        "Priority",
+        ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
     )
+
+issue = st.text_area(
+    "Issue Description",
+    placeholder="Describe the maintenance problem..."
+)
+
+if st.button("Create Work Order", use_container_width=True):
+
+    if machine and issue.strip():
+
+        create_work_order(
+            machine=machine,
+            issue=issue,
+            priority=priority,
+            created_by=user.get("fullname", "SYSTEM")
+        )
+
+        st.success("Work order created successfully.")
+        st.rerun()
+
+    else:
+        st.warning("Please complete all fields.")
 
 st.divider()
 
 # ==========================================================
-# WORK ORDERS
+# WORK ORDER MANAGEMENT
 # ==========================================================
 
-st.subheader("📋 Work Orders")
+st.subheader("🧾 Work Order Management")
 
 if orders.empty:
 
@@ -202,57 +114,81 @@ else:
 
     st.dataframe(
         orders,
-        width="stretch",
+        use_container_width=True,
         hide_index=True
     )
 
 st.divider()
 
 # ==========================================================
-# UPDATE STATUS
+# STATUS UPDATE (CONTROL ONLY)
 # ==========================================================
+
+st.subheader("⚙ Update Work Order Status")
 
 if not orders.empty:
 
-    st.subheader("🛠 Update Work Order Status")
-
     order_id = st.selectbox(
-        "Work Order ID",
-        orders["id"].tolist(),
-        key="engineer_order"
+        "Select Work Order",
+        orders["id"].tolist()
     )
 
     new_status = st.selectbox(
         "New Status",
-        [
-            "PENDING",
-            "APPROVED",
-            "ASSIGNED",
-            "IN_PROGRESS",
-            "COMPLETED",
-            "REJECTED"
-        ],
-        key="engineer_status"
+        ["PENDING", "APPROVED", "IN_PROGRESS", "COMPLETED", "REJECTED"]
     )
 
-    if st.button(
-        "Update Status",
-        key="engineer_update"
-    ):
+    if st.button("Update Status", use_container_width=True):
 
-        update_work_order_status(
-            order_id,
-            new_status
-        )
+        update_work_order_status(order_id, new_status)
 
-        st.success("Work order updated successfully.")
-
+        st.success("Status updated successfully.")
         st.rerun()
 
 st.divider()
 
 # ==========================================================
+# SUMMARY VIEW
+# ==========================================================
+
+st.subheader("📊 Work Order Status Distribution")
+
+if not orders.empty:
+    st.bar_chart(orders["status"].value_counts())
+else:
+    st.info("No data available.")
+
+st.divider()
+
+# ==========================================================
+# QUICK NAVIGATION
+# ==========================================================
+
+quick_navigation(
+    prediction=True,
+    analytics=True,
+    maintenance=False,
+    admin=user.get("role") == "Administrator"
+)
+
+st.divider()
+
+# ==========================================================
+# SESSION INFO
+# ==========================================================
+
+st.subheader("👤 Session Information")
+
+st.info(f"""
+**User:** {user.get('fullname', 'Unknown')}
+
+**Role:** {user.get('role', 'Unknown')}
+
+**Mode:** Maintenance Control Center
+""")
+
+# ==========================================================
 # FOOTER
 # ==========================================================
 
-show_footer()
+end_page()

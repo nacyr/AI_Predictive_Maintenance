@@ -1,158 +1,269 @@
-from pathlib import Path
-import sys
-
-# ==========================================================
-# SAFE PROJECT ROOT (STREAMLIT CLOUD FIX)
-# ==========================================================
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
-
 import streamlit as st
 import pandas as pd
 
-# ==========================================================
-# SAFE IMPORT (MODULE STYLE)
-# ==========================================================
+from utils.page_config import setup_page, end_page
 
-try:
-    import database.work_orders as wo
-except Exception as e:
-    st.error("❌ Failed to import database module")
-    st.code(str(e))
-    st.stop()
-
-# ==========================================================
-# PAGE CONFIG
-# ==========================================================
-
-st.set_page_config(
-    page_title="Industrial AI Predictive Maintenance",
-    layout="wide"
+from utils.data_loader import (
+    load_statistics,
+    load_work_orders,
+    load_daily_trends,
+    load_machine_frequency,
+    load_ai_breakdown,
 )
 
-st.title("🏭 Industrial Predictive Maintenance Dashboard")
+from utils.dashboard_widgets import (
+    section_title,
+    metric_row,
+    dataframe_card,
+)
+
+from utils.charts import (
+    line_chart,
+    bar_chart,
+)
+
+from database.work_orders import (
+    search_work_orders_by_machine,
+    update_work_order_status,
+    delete_work_order
+)
 
 # ==========================================================
-# LOAD DATA SAFELY
+# PAGE SETUP
 # ==========================================================
 
-try:
-    stats = wo.get_work_order_statistics()
-    df_all = wo.get_all_work_orders()
-except Exception as e:
-    st.error("❌ Database loading error")
-    st.code(str(e))
-    st.stop()
+user = setup_page(
+    title="🏭 Administrator Dashboard",
+    icon="🏭",
+    subtitle="Enterprise System Control Center",
+    allowed_roles=["Administrator"],
+)
 
 # ==========================================================
-# TABS
+# LOAD DATA
+# ==========================================================
+
+stats = load_statistics()
+orders = load_work_orders()
+daily_trends = load_daily_trends()
+machine_frequency = load_machine_frequency()
+ai_breakdown = load_ai_breakdown()
+
+if orders is None or orders.empty:
+    orders = pd.DataFrame()
+
+# ==========================================================
+# KPI SECTION
+# ==========================================================
+
+section_title("📊 Enterprise Overview")
+
+metric_row(
+    ("Total Orders", stats.get("total", 0)),
+    ("Pending", stats.get("pending", 0)),
+    ("Approved", stats.get("approved", 0)),
+    ("Completed", stats.get("completed", 0)),
+    ("Rejected", stats.get("rejected", 0)),
+)
+
+st.divider()
+
+# ==========================================================
+# ANALYTICS TABS
 # ==========================================================
 
 tab1, tab2, tab3 = st.tabs([
-    "📊 Overview",
-    "🛠️ Work Orders",
-    "⚙️ Control Panel"
+    "📈 Daily Trends",
+    "🏭 Machine Failures",
+    "🤖 AI vs Manual"
 ])
 
-# ==========================================================
-# TAB 1 — OVERVIEW
-# ==========================================================
+# --------------------------
+# DAILY TRENDS
+# --------------------------
 
 with tab1:
-    st.subheader("System Overview")
+    st.subheader("Daily Work Order Trends")
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-
-    col1.metric("Total", stats.get("total", 0))
-    col2.metric("Pending", stats.get("pending", 0))
-    col3.metric("Assigned", stats.get("assigned", 0))
-    col4.metric("In Progress", stats.get("in_progress", 0))
-    col5.metric("Completed", stats.get("completed", 0))
-
-    st.divider()
-
-    st.subheader("Recent Work Orders")
-
-    if df_all is not None and not df_all.empty:
-        st.dataframe(df_all.head(10), use_container_width=True)
+    if daily_trends.empty:
+        st.info("No trend data available.")
     else:
-        st.info("No work orders available")
+        line_chart(
+            daily_trends,
+            x="date",
+            y="count",
+            title="Daily Work Orders"
+        )
+        dataframe_card(daily_trends)
 
-# ==========================================================
-# TAB 2 — WORK ORDERS
-# ==========================================================
+# --------------------------
+# MACHINE FAILURES
+# --------------------------
 
 with tab2:
-    st.subheader("Work Orders Management")
+    st.subheader("Machine Failure Frequency")
 
-    search = st.text_input("Search by machine name", key="search_machine")
-
-    if search:
-        data = wo.search_work_orders_by_machine(search)
+    if machine_frequency.empty:
+        st.info("No machine statistics available.")
     else:
-        data = df_all
+        bar_chart(
+            machine_frequency,
+            x="machine",
+            y="count",
+            title="Machine Failure Frequency"
+        )
+        dataframe_card(machine_frequency)
 
-    if data is not None and not data.empty:
-        st.dataframe(data, use_container_width=True)
-    else:
-        st.info("No records found")
-
-# ==========================================================
-# TAB 3 — CONTROL PANEL
-# ==========================================================
+# --------------------------
+# AI BREAKDOWN
+# --------------------------
 
 with tab3:
-    st.subheader("Control Center")
+    st.subheader("AI vs Manual Work Orders")
 
-    col1, col2 = st.columns(2)
+    if not ai_breakdown:
+        st.info("No AI work order data available.")
+    else:
+        ai_df = pd.DataFrame({
+            "Source": list(ai_breakdown.keys()),
+            "Count": list(ai_breakdown.values())
+        })
 
-    # -------------------------
-    # ASSIGN ENGINEER
-    # -------------------------
-    with col1:
-        st.markdown("### Assign Engineer")
-
-        work_id = st.number_input(
-            "Work Order ID",
-            min_value=1,
-            step=1,
-            key="assign_work_id"
+        bar_chart(
+            ai_df,
+            x="Source",
+            y="Count",
+            title="AI vs Manual"
         )
 
-        engineer = st.text_input(
-            "Engineer Name",
-            key="assign_engineer_name"
-        )
+        dataframe_card(ai_df)
 
-        if st.button("Assign Engineer", key="assign_btn"):
-            if engineer.strip():
-                wo.assign_work_order(work_id, engineer.strip())
-                st.success("Engineer assigned successfully")
-                st.rerun()
-            else:
-                st.warning("Please enter engineer name")
+st.divider()
 
-    # -------------------------
-    # UPDATE STATUS
-    # -------------------------
-    with col2:
-        st.markdown("### Update Status")
+# ==========================================================
+# SEARCH WORK ORDERS
+# ==========================================================
 
-        status_id = st.number_input(
-            "Work Order ID",
-            min_value=1,
-            step=1,
-            key="status_work_id"
-        )
+section_title("🔍 Search Work Orders")
 
-        status = st.selectbox(
-            "Status",
-            ["PENDING", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "REJECTED"],
-            key="status_select"
-        )
+search_text = st.text_input("Search by Machine")
 
-        if st.button("Update Status", key="status_btn"):
-            wo.change_work_order_status(status_id, status)
-            st.success("Status updated successfully")
-            st.rerun()
+if search_text.strip():
+    filtered = search_work_orders_by_machine(search_text)
+else:
+    filtered = orders
+
+dataframe_card(filtered)
+
+st.divider()
+
+# ==========================================================
+# UPDATE STATUS
+# ==========================================================
+
+section_title("⚙ Update Work Order")
+
+if not orders.empty:
+
+    order_id = st.selectbox(
+        "Select Work Order",
+        orders["id"].tolist(),
+        key="admin_order"
+    )
+
+    new_status = st.selectbox(
+        "New Status",
+        ["PENDING", "APPROVED", "IN_PROGRESS", "COMPLETED", "REJECTED"],
+        key="admin_status"
+    )
+
+    if st.button("Update Status", use_container_width=True):
+
+        update_work_order_status(order_id, new_status)
+        st.success("Work order updated successfully.")
+        st.rerun()
+
+st.divider()
+
+# ==========================================================
+# DELETE WORK ORDER
+# ==========================================================
+
+section_title("🗑 Delete Work Order")
+
+if not orders.empty:
+
+    delete_id = st.selectbox(
+        "Select Work Order",
+        orders["id"].tolist(),
+        key="delete_order"
+    )
+
+    if st.button("Delete Work Order", use_container_width=True):
+
+        delete_work_order(delete_id)
+        st.success("Work order deleted successfully.")
+        st.rerun()
+
+st.divider()
+
+# ==========================================================
+# FULL TABLE
+# ==========================================================
+
+st.subheader("📋 All Work Orders")
+
+if orders.empty:
+    st.info("No work orders available.")
+else:
+    st.dataframe(orders, use_container_width=True, hide_index=True)
+
+st.divider()
+
+# ==========================================================
+# QUICK NAVIGATION
+# ==========================================================
+
+st.subheader("⚡ Quick Navigation")
+
+c1, c2, c3, c4 = st.columns(4)
+
+with c1:
+    if st.button("🤖 Prediction", use_container_width=True):
+        st.switch_page("pages/prediction.py")
+
+with c2:
+    if st.button("📈 Analytics", use_container_width=True):
+        st.switch_page("pages/analytics.py")
+
+with c3:
+    if st.button("🛠 Maintenance", use_container_width=True):
+        st.switch_page("pages/maintenance_dashboard.py")
+
+with c4:
+    if st.button("⚙ Operations", use_container_width=True):
+        st.switch_page("pages/operations_dashboard.py")
+
+st.divider()
+
+# ==========================================================
+# SYSTEM STATUS
+# ==========================================================
+
+st.subheader("🟢 System Status")
+
+if orders.empty:
+    st.info("No maintenance records available.")
+else:
+    pending = (orders["status"] == "PENDING").sum()
+
+    if pending == 0:
+        st.success("All work orders are up to date.")
+    else:
+        st.warning(f"{pending} work order(s) are still pending.")
+
+# ==========================================================
+# END PAGE
+# ==========================================================
+
+end_page()

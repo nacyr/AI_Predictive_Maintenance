@@ -1,298 +1,179 @@
-import sys
-from pathlib import Path
-from datetime import datetime
-
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
-from streamlit_autorefresh import st_autorefresh
 
-# ==========================================================
-# PROJECT ROOT
-# ==========================================================
-
-project_root = Path(__file__).resolve().parent.parent
-sys.path.append(str(project_root))
-
-# ==========================================================
-# IMPORTS
-# ==========================================================
-
-from components.header import show_header
-from components.sidebar import show_sidebar
-from components.footer import show_footer
+from utils.page_config import setup_page, end_page
+from utils.navigation import quick_navigation
 
 from utils.simulator import generate_sensor_data
-from ml.predict import predict_failure
-from utils.recommendation import maintenance_recommendation
-
-from database.predictions import save_prediction
-from database.work_orders import create_work_order_from_prediction
+from ml.smart_maintenance_engine import predict_failure
 
 # ==========================================================
-# PAGE CONFIG
+# PAGE SETUP
 # ==========================================================
 
-st.set_page_config(
-    page_title="AI Prediction Engine",
-    page_icon="🔮",
-    layout="wide"
-)
-
-# ==========================================================
-# AUTO REFRESH
-# ==========================================================
-
-st_autorefresh(
-    interval=10000,
-    key="prediction_refresh"
-)
-
-# ==========================================================
-# LOGIN CHECK
-# ==========================================================
-
-if "user" not in st.session_state or st.session_state.user is None:
-    st.warning("Please login first.")
-    st.switch_page("app.py")
-    st.stop()
-
-user = st.session_state.user
-
-# ==========================================================
-# HEADER
-# ==========================================================
-
-show_header(
-    user,
-    "🔮 AI Failure Prediction",
-    "Real-Time Predictive Maintenance Engine"
-)
-
-show_sidebar(user)
-
-# ==========================================================
-# MACHINE SELECTION
-# ==========================================================
-
-machine = st.selectbox(
-    "Select Machine",
-    [
-        "Pump A1",
-        "Compressor B2",
-        "Generator C3",
-        "Motor D4",
-        "Cooling System E5"
-    ]
-)
-
-# ==========================================================
-# LIVE SENSOR DATA
-# ==========================================================
-
-sensor = generate_sensor_data()
-
-prediction, probability = predict_failure(
-    sensor["temperature"],
-    sensor["pressure"],
-    sensor["vibration"],
-    sensor["current"],
-    sensor["rpm"],
-    sensor["running_hours"]
-)
-
-risk_level, recommendation = maintenance_recommendation(
-    prediction,
-    probability
-)
-
-health = max(0, (1 - probability) * 100)
-remaining_life = int(health * 10)
-
-# ==========================================================
-# SAVE PREDICTION
-# ==========================================================
-
-try:
-
-    save_prediction(
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        machine,
-        sensor["temperature"],
-        sensor["pressure"],
-        sensor["vibration"],
-        sensor["current"],
-        sensor["rpm"],
-        sensor["running_hours"],
-        probability,
-        health,
-        remaining_life,
-        recommendation
-    )
-
-except Exception:
-    pass
-
-# ==========================================================
-# AUTO CREATE WORK ORDER
-# ==========================================================
-
-try:
-
-    create_work_order_from_prediction(
-        machine,
-        probability,
-        sensor
-    )
-
-except Exception:
-    pass
-
-# ==========================================================
-# KPI CARDS
-# ==========================================================
-
-st.subheader("AI Prediction Results")
-
-c1, c2, c3, c4 = st.columns(4)
-
-c1.metric(
-    "Prediction",
-    "FAILURE" if prediction else "NORMAL"
-)
-
-c2.metric(
-    "Failure Risk",
-    f"{probability*100:.2f}%"
-)
-
-c3.metric(
-    "Machine Health",
-    f"{health:.1f}%"
-)
-
-c4.metric(
-    "Remaining Life",
-    f"{remaining_life} hrs"
-)
-
-st.divider()
-
-# ==========================================================
-# SENSOR TABLE
-# ==========================================================
-
-st.subheader("📡 Live Sensor Values")
-
-sensor_df = pd.DataFrame({
-    "Sensor":[
-        "Temperature",
-        "Pressure",
-        "Vibration",
-        "Current",
-        "RPM",
-        "Running Hours"
+user = setup_page(
+    title="AI Prediction Dashboard",
+    icon="🤖",
+    allowed_roles=[
+        "Administrator",
+        "Maintenance Engineer",
+        "Operations Engineer",
+        "Supervisor"
     ],
-    "Value":[
+    subtitle="Machine Failure Prediction & Risk Analytics"
+)
+
+# ==========================================================
+# INTRO
+# ==========================================================
+
+st.info(
+    "This dashboard is AI-only. It does not create or modify work orders."
+)
+
+# ==========================================================
+# MACHINE SIMULATION
+# ==========================================================
+
+machines = [
+    "Pump A1",
+    "Compressor B2",
+    "Generator C3",
+    "Motor D4",
+    "Cooling Unit E5"
+]
+
+records = []
+
+for m in machines:
+
+    sensor = generate_sensor_data()
+
+    prediction, risk = predict_failure(
         sensor["temperature"],
         sensor["pressure"],
         sensor["vibration"],
         sensor["current"],
         sensor["rpm"],
         sensor["running_hours"]
-    ]
-})
+    )
+
+    records.append({
+        "Machine": m,
+        "Temperature": round(sensor["temperature"], 2),
+        "Pressure": round(sensor["pressure"], 2),
+        "Vibration": round(sensor["vibration"], 2),
+        "Current": round(sensor["current"], 2),
+        "RPM": int(sensor["rpm"]),
+        "Running Hours": sensor["running_hours"],
+        "Prediction": "FAILURE" if prediction else "NORMAL",
+        "Risk (%)": round(risk * 100, 2)
+    })
+
+df = pd.DataFrame(records)
+
+# ==========================================================
+# KPI SECTION
+# ==========================================================
+
+st.subheader("📊 AI Risk Overview")
+
+high = (df["Risk (%)"] >= 70).sum()
+medium = ((df["Risk (%)"] >= 40) & (df["Risk (%)"] < 70)).sum()
+low = (df["Risk (%)"] < 40).sum()
+
+c1, c2, c3 = st.columns(3)
+
+c1.metric("High Risk", high)
+c2.metric("Medium Risk", medium)
+c3.metric("Low Risk", low)
+
+st.divider()
+
+# ==========================================================
+# FULL PREDICTION TABLE
+# ==========================================================
+
+st.subheader("🤖 Machine Failure Predictions")
 
 st.dataframe(
-    sensor_df,
-    width="stretch",
+    df,
+    use_container_width=True,
     hide_index=True
 )
 
 st.divider()
 
 # ==========================================================
-# HEALTH GAUGE
+# RISK VISUALIZATION
 # ==========================================================
 
-st.subheader("Machine Health")
+st.subheader("📈 Risk Analysis")
 
-fig = go.Figure(go.Indicator(
-
-    mode="gauge+number",
-
-    value=health,
-
-    title={"text":"Health %"},
-
-    gauge={
-        "axis":{"range":[0,100]},
-        "bar":{"color":"green"},
-        "steps":[
-            {"range":[0,40],"color":"red"},
-            {"range":[40,70],"color":"orange"},
-            {"range":[70,100],"color":"lightgreen"}
-        ]
-    }
-))
-
-st.plotly_chart(
-    fig,
-    width="stretch"
-)
+st.bar_chart(df.set_index("Machine")["Risk (%)"])
 
 st.divider()
 
 # ==========================================================
-# RISK ANALYSIS
+# HIGH RISK ALERTS (READ ONLY)
 # ==========================================================
 
-st.subheader("Maintenance Recommendation")
+st.subheader("🚨 High Risk Machines")
 
-if risk_level == "LOW":
-    st.success(recommendation)
+high_risk = df[df["Risk (%)"] >= 70]
 
-elif risk_level == "MEDIUM":
-    st.warning(recommendation)
-
+if high_risk.empty:
+    st.success("No high-risk machines detected.")
 else:
-    st.error(recommendation)
+    st.error(f"{len(high_risk)} machine(s) require attention.")
+    st.dataframe(high_risk, use_container_width=True, hide_index=True)
+
+st.divider()
 
 # ==========================================================
-# TECHNICAL SUMMARY
+# INSIGHTS SECTION
 # ==========================================================
 
-st.subheader("Prediction Summary")
+st.subheader("🧠 AI Insights")
 
-summary = pd.DataFrame({
+if high == 0:
+    st.success("All machines are currently operating within safe limits.")
+elif high <= 2:
+    st.warning("Early warning: some machines are approaching failure threshold.")
+else:
+    st.error("Critical: multiple machines show high failure probability.")
 
-    "Metric":[
-        "Machine",
-        "Prediction",
-        "Failure Probability",
-        "Health",
-        "Remaining Life",
-        "Recommendation"
-    ],
+st.divider()
 
-    "Value":[
-        machine,
-        "FAILURE" if prediction else "NORMAL",
-        f"{probability*100:.2f}%",
-        f"{health:.1f}%",
-        f"{remaining_life} hrs",
-        recommendation
-    ]
-})
+# ==========================================================
+# QUICK NAVIGATION
+# ==========================================================
 
-st.dataframe(
-    summary,
-    width="stretch",
-    hide_index=True
+quick_navigation(
+    prediction=False,
+    analytics=True,
+    maintenance=True,
+    admin=user.get("role") == "Administrator"
 )
+
+st.divider()
+
+# ==========================================================
+# SESSION INFO
+# ==========================================================
+
+st.subheader("👤 Session Information")
+
+st.info(f"""
+**User:** {user.get('fullname', 'Unknown')}
+
+**Role:** {user.get('role', 'Unknown')}
+
+**Mode:** AI Analysis Only
+""")
 
 # ==========================================================
 # FOOTER
 # ==========================================================
 
-show_footer()
+end_page()
