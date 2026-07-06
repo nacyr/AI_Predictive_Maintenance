@@ -5,13 +5,19 @@ from streamlit_autorefresh import st_autorefresh
 
 from utils.page_config import setup_page, end_page
 from utils.navigation import quick_navigation
-from utils.simulator import generate_sensor_data
+
+from utils.simulator import (
+    generate_sensor_data,
+    calculate_failure_risk,
+    get_machine_status
+)
 
 from components.live_status import show_live_status
 from components.kpi_cards import show_kpi_cards
 from components.live_machine_table import show_live_machine_table
 from components.plant_health import show_plant_health
 from components.alert_center import show_alert_center
+
 
 # ==========================================================
 # PAGE SETUP
@@ -27,6 +33,7 @@ user = setup_page(
     ]
 )
 
+
 # ==========================================================
 # AUTO REFRESH
 # ==========================================================
@@ -36,12 +43,15 @@ refresh_count = st_autorefresh(
     key="operations_dashboard_refresh"
 )
 
+
 show_live_status(refresh_count)
+
 
 st.divider()
 
+
 # ==========================================================
-# LIVE MACHINE LIST
+# MACHINE FLEET
 # ==========================================================
 
 machines = [
@@ -57,81 +67,35 @@ machines = [
 
 ]
 
+
 # ==========================================================
-# GENERATE LIVE SENSOR DATA
+# AI LIVE SENSOR ENGINE
 # ==========================================================
 
 records = []
 
+
 for machine in machines:
 
-    sensor = generate_sensor_data()
 
-    # ------------------------------------------------------
-    # SMART AI RISK CALCULATION
-    # ------------------------------------------------------
+    sensor = generate_sensor_data(machine)
 
-    temp_score = max(
-        0,
-        sensor["temperature"] - 50
-    ) * 1.2
 
-    vibration_score = max(
-        0,
-        sensor["vibration"] - 2.0
-    ) * 12
+    risk = calculate_failure_risk(
 
-    pressure_score = abs(
-        sensor["pressure"] - 8
-    ) * 4
+        sensor,
 
-    current_score = max(
-        0,
-        sensor["current"] - 35
-    ) * 0.8
-
-    hour_score = max(
-        0,
-        sensor["running_hours"] - 5000
-    ) / 500
-
-    risk = round(
-
-        min(
-
-            100,
-
-            temp_score
-            + vibration_score
-            + pressure_score
-            + current_score
-            + hour_score
-
-        ),
-
-        1
+        machine
 
     )
 
-    # ------------------------------------------------------
-    # MACHINE STATUS
-    # ------------------------------------------------------
 
-    if risk >= 80:
+    status = get_machine_status(
 
-        status = "CRITICAL"
+        risk
 
-    elif risk >= 55:
+    )
 
-        status = "WARNING"
-
-    else:
-
-        status = "NORMAL"
-
-    # ------------------------------------------------------
-    # MACHINE RECORD
-    # ------------------------------------------------------
 
     records.append(
 
@@ -139,31 +103,27 @@ for machine in machines:
 
             "Machine": machine,
 
-            "Temperature (°C)": round(
-                sensor["temperature"], 2
-            ),
 
-            "Pressure (bar)": round(
-                sensor["pressure"], 2
-            ),
+            "Temperature (°C)": sensor["temperature"],
 
-            "Vibration": round(
-                sensor["vibration"], 2
-            ),
 
-            "Current (A)": round(
-                sensor["current"], 2
-            ),
+            "Pressure (bar)": sensor["pressure"],
 
-            "RPM": round(
-                sensor["rpm"], 0
-            ),
 
-            "Running Hours": sensor[
-                "running_hours"
-            ],
+            "Vibration": sensor["vibration"],
+
+
+            "Current (A)": sensor["current"],
+
+
+            "RPM": sensor["rpm"],
+
+
+            "Running Hours": sensor["running_hours"],
+
 
             "Failure Risk (%)": risk,
+
 
             "Status": status
 
@@ -171,22 +131,49 @@ for machine in machines:
 
     )
 
+
+
 machine_df = pd.DataFrame(records)
+
+
+
 # ==========================================================
-# KPI CALCULATIONS
+# KPI CALCULATION
 # ==========================================================
 
 critical = (
-    machine_df["Status"] == "CRITICAL"
-).sum()
+
+    machine_df["Status"]
+
+    .eq("CRITICAL")
+
+    .sum()
+
+)
+
 
 warning = (
-    machine_df["Status"] == "WARNING"
-).sum()
+
+    machine_df["Status"]
+
+    .eq("WARNING")
+
+    .sum()
+
+)
+
 
 healthy = (
-    machine_df["Status"] == "NORMAL"
-).sum()
+
+    machine_df["Status"]
+
+    .eq("NORMAL")
+
+    .sum()
+
+)
+
+
 
 plant_health = round(
 
@@ -196,8 +183,10 @@ plant_health = round(
 
 ) if len(machine_df) else 100
 
+
+
 # ==========================================================
-# KPI DASHBOARD
+# KPI CARDS
 # ==========================================================
 
 show_kpi_cards(
@@ -212,79 +201,145 @@ show_kpi_cards(
 
 )
 
-st.divider()
 
-# ==========================================================
-# LIVE MACHINE MONITORING
-# ==========================================================
-
-show_live_machine_table(machine_df)
 
 st.divider()
 
+
+
 # ==========================================================
-# FAILURE RISK ANALYSIS
+# LIVE MACHINE TABLE
 # ==========================================================
 
-st.subheader("📈 AI Failure Risk Analysis")
+show_live_machine_table(
+
+    machine_df
+
+)
+
+
+
+st.divider()
+
+
+
+# ==========================================================
+# FAILURE RISK ANALYTICS
+# ==========================================================
+
+st.subheader(
+
+    "📈 AI Failure Risk Analysis"
+
+)
+
 
 risk_chart = (
 
     machine_df
 
-    .set_index("Machine")["Failure Risk (%)"]
+    .set_index("Machine")
+
+    ["Failure Risk (%)"]
 
 )
 
-st.bar_chart(risk_chart)
+
+
+st.bar_chart(
+
+    risk_chart
+
+)
+
+
 
 st.caption(
-    "Live AI prediction of machine failure probability."
+
+    "AI engine calculates equipment failure probability using live sensor intelligence."
+
 )
 
-st.divider()
 
-# ==========================================================
-# PLANT HEALTH OVERVIEW
-# ==========================================================
-
-show_plant_health(machine_df)
 
 st.divider()
 
+
+
 # ==========================================================
-# AI ALERT CENTER
+# PLANT HEALTH
 # ==========================================================
 
-show_alert_center(machine_df)
+show_plant_health(
+
+    machine_df
+
+)
+
 
 st.divider()
+
+
+
+# ==========================================================
+# ALERT CENTER
+# ==========================================================
+
+show_alert_center(
+
+    machine_df
+
+)
+
+
+
+st.divider()
+
+
 
 # ==========================================================
 # OPERATIONS STATUS
 # ==========================================================
 
-st.subheader("🟢 Operations Status")
+st.subheader(
+
+    "🟢 Operations Status"
+
+)
+
 
 if critical == 0:
 
     st.success(
-        "Plant is operating normally. No critical machines detected."
+
+        "Plant operating normally. No critical machines detected."
+
     )
+
 
 elif critical <= 2:
 
     st.warning(
+
         f"{critical} critical machine(s) require maintenance attention."
+
     )
+
 
 else:
 
     st.error(
+
         "Critical plant condition detected. Immediate intervention required."
+
     )
 
+
+
 st.divider()
+
+
+
 # ==========================================================
 # QUICK NAVIGATION
 # ==========================================================
@@ -303,107 +358,176 @@ quick_navigation(
 
 )
 
+
+
 st.divider()
+
+
 
 # ==========================================================
 # SESSION INFORMATION
 # ==========================================================
 
-st.subheader("👤 Session Information")
+st.subheader(
+
+    "👤 Session Information"
+
+)
+
+
 
 left, right = st.columns(2)
+
+
 
 with left:
 
     st.info(
-        f"""
-**User:** {user.get('fullname', 'Unknown')}
 
-**Role:** {user.get('role', 'Unknown')}
+        f"""
+
+**User:** {user.get('fullname','Unknown')}
+
+
+**Role:** {user.get('role','Unknown')}
+
 """
+
     )
+
+
 
 with right:
 
     st.info(
+
         f"""
+
 **Dashboard:** Operations Dashboard
+
 
 **Refresh Count:** {refresh_count}
 
+
 **Refresh Interval:** 10 Seconds
+
 """
+
     )
+
+
 
 st.divider()
 
+
+
 # ==========================================================
-# LIVE OPERATIONS SUMMARY
+# LIVE SUMMARY
 # ==========================================================
 
-st.subheader("📡 Live Operations Summary")
+st.subheader(
+
+    "📡 Live Operations Summary"
+
+)
+
+
 
 c1, c2 = st.columns(2)
+
+
 
 with c1:
 
     st.success(
+
         f"""
+
 🏭 Machines Monitored: **{len(machine_df)}**
+
 
 🟢 Healthy: **{healthy}**
 
+
 🟡 Warning: **{warning}**
 
+
 🔴 Critical: **{critical}**
+
 """
+
     )
+
+
 
 with c2:
 
     st.info(
+
         f"""
-💚 Plant Health: **{plant_health:.1f}%**
+
+💚 Plant Health: **{plant_health}%**
+
 
 🤖 AI Engine: **ACTIVE**
 
+
 📡 Sensor Network: **ONLINE**
 
+
 💾 Database: **CONNECTED**
+
 """
+
     )
 
+
+
 st.divider()
+
+
 
 # ==========================================================
 # LOGOUT
 # ==========================================================
 
-st.subheader("🔐 Session Control")
+st.subheader(
 
-col1, col2 = st.columns([1, 3])
+    "🔐 Session Control"
 
-with col1:
+)
 
-    if st.button(
-        "🚪 Logout",
-        use_container_width=True,
-        type="primary"
-    ):
 
-        st.session_state.clear()
 
-        st.success("Logged out successfully.")
+if st.button(
 
-        st.switch_page("app.py")
+    "🚪 Logout",
 
-with col2:
+    use_container_width=True,
 
-    st.info(
-        "Click **Logout** to securely end your session."
+    type="primary"
+
+):
+
+    st.session_state.clear()
+
+    st.success(
+
+        "Logged out successfully."
+
     )
 
+    st.switch_page(
+
+        "app.py"
+
+    )
+
+
+
 st.divider()
+
+
 
 # ==========================================================
 # FOOTER
