@@ -1,42 +1,111 @@
 import streamlit as st
+import pandas as pd
 
 from utils.page_config import setup_page, end_page
-from utils.dashboard_widgets import (
-    load_work_orders,
-    generate_machine_data,
-    show_work_order_kpis,
-    show_machine_table,
-    show_machine_health_summary,
-    show_system_status
-)
 from utils.navigation import quick_navigation
+from utils.simulator import generate_sensor_data
+
+from database.work_orders import get_work_orders
 
 # ==========================================================
 # PAGE SETUP
 # ==========================================================
 
 user = setup_page(
-    title="Supervisor Dashboard",
+    title="👨‍💼 Supervisor Dashboard",
     icon="👨‍💼",
+    subtitle="Maintenance Supervision & Operations",
     allowed_roles=[
         "Administrator",
         "Supervisor"
-    ],
-    subtitle="Maintenance Supervision & Operations"
+    ]
 )
 
 # ==========================================================
-# LOAD DATA
+# LOAD WORK ORDERS
 # ==========================================================
 
-orders = load_work_orders()
-machine_df = generate_machine_data()
+orders = get_work_orders()
+
+if orders is None:
+    orders = pd.DataFrame()
 
 # ==========================================================
-# WORK ORDER KPI
+# GENERATE LIVE MACHINE DATA
 # ==========================================================
 
-show_work_order_kpis(orders)
+machines = [
+    "Pump A1",
+    "Pump A2",
+    "Compressor B1",
+    "Compressor B2",
+    "Motor C1",
+    "Generator D1"
+]
+
+records = []
+
+for machine in machines:
+
+    sensor = generate_sensor_data()
+
+    risk = min(
+        100,
+        round(
+            sensor["temperature"] * 0.40 +
+            sensor["vibration"] * 15 +
+            sensor["pressure"] * 2,
+            1
+        )
+    )
+
+    if risk >= 70:
+        status = "CRITICAL"
+    elif risk >= 40:
+        status = "WARNING"
+    else:
+        status = "NORMAL"
+
+    records.append({
+        "Machine": machine,
+        "Temperature (°C)": sensor["temperature"],
+        "Pressure (bar)": sensor["pressure"],
+        "Vibration": sensor["vibration"],
+        "Current (A)": sensor["current"],
+        "RPM": sensor["rpm"],
+        "Failure Risk (%)": risk,
+        "Status": status
+    })
+
+machine_df = pd.DataFrame(records)
+
+# ==========================================================
+# KPI SECTION
+# ==========================================================
+
+st.subheader("📊 Work Order Overview")
+
+c1, c2, c3, c4 = st.columns(4)
+
+c1.metric("Total", len(orders))
+
+c2.metric(
+    "Pending",
+    (orders["status"] == "PENDING").sum()
+    if not orders.empty else 0
+)
+
+c3.metric(
+    "Approved",
+    (orders["status"] == "APPROVED").sum()
+    if not orders.empty else 0
+)
+
+c4.metric(
+    "Completed",
+    (orders["status"] == "COMPLETED").sum()
+    if not orders.empty else 0
+)
 
 st.divider()
 
@@ -44,37 +113,36 @@ st.divider()
 # LIVE MACHINE STATUS
 # ==========================================================
 
-show_machine_table(machine_df)
+st.subheader("🏭 Live Machine Status")
+
+st.dataframe(
+    machine_df,
+    use_container_width=True,
+    hide_index=True
+)
 
 st.divider()
 
 # ==========================================================
-# APPROVAL QUEUE
+# PENDING WORK ORDERS
 # ==========================================================
 
 st.subheader("📝 Pending Work Orders")
 
-if orders.empty:
+pending = (
+    orders[orders["status"] == "PENDING"]
+    if not orders.empty
+    else pd.DataFrame()
+)
 
-    st.info("No work orders available.")
-
+if pending.empty:
+    st.success("There are no pending work orders.")
 else:
-
-    pending = orders[
-        orders["status"] == "PENDING"
-    ]
-
-    if pending.empty:
-
-        st.success("There are no pending work orders.")
-
-    else:
-
-        st.dataframe(
-            pending,
-            use_container_width=True,
-            hide_index=True
-        )
+    st.dataframe(
+        pending,
+        use_container_width=True,
+        hide_index=True
+    )
 
 st.divider()
 
@@ -84,27 +152,20 @@ st.divider()
 
 st.subheader("✅ Approved Work Orders")
 
-if orders.empty:
+approved = (
+    orders[orders["status"] == "APPROVED"]
+    if not orders.empty
+    else pd.DataFrame()
+)
 
-    st.info("No work orders available.")
-
+if approved.empty:
+    st.info("No approved work orders.")
 else:
-
-    approved = orders[
-        orders["status"] == "APPROVED"
-    ]
-
-    if approved.empty:
-
-        st.info("No approved work orders.")
-
-    else:
-
-        st.dataframe(
-            approved,
-            use_container_width=True,
-            hide_index=True
-        )
+    st.dataframe(
+        approved,
+        use_container_width=True,
+        hide_index=True
+    )
 
 st.divider()
 
@@ -114,42 +175,32 @@ st.divider()
 
 st.subheader("✔ Completed Work Orders")
 
-if orders.empty:
+completed = (
+    orders[orders["status"] == "COMPLETED"]
+    if not orders.empty
+    else pd.DataFrame()
+)
 
-    st.info("No work orders available.")
-
+if completed.empty:
+    st.info("No completed work orders.")
 else:
-
-    completed = orders[
-        orders["status"] == "COMPLETED"
-    ]
-
-    if completed.empty:
-
-        st.info("No completed work orders.")
-
-    else:
-
-        st.dataframe(
-            completed,
-            use_container_width=True,
-            hide_index=True
-        )
+    st.dataframe(
+        completed,
+        use_container_width=True,
+        hide_index=True
+    )
 
 st.divider()
 
 # ==========================================================
-# WORK ORDER STATUS
+# WORK ORDER DISTRIBUTION
 # ==========================================================
 
 st.subheader("📈 Work Order Distribution")
 
 if orders.empty:
-
     st.info("No work order data available.")
-
 else:
-
     st.bar_chart(
         orders["status"].value_counts()
     )
@@ -160,7 +211,26 @@ st.divider()
 # MACHINE HEALTH
 # ==========================================================
 
-show_machine_health_summary(machine_df)
+st.subheader("💚 Machine Health")
+
+health = machine_df.copy()
+
+health["Health (%)"] = (
+    100 - health["Failure Risk (%)"]
+).clip(lower=0)
+
+st.dataframe(
+    health[
+        [
+            "Machine",
+            "Health (%)",
+            "Failure Risk (%)",
+            "Status"
+        ]
+    ],
+    use_container_width=True,
+    hide_index=True
+)
 
 st.divider()
 
@@ -172,7 +242,7 @@ st.subheader("📝 Supervisor Notes")
 
 notes = st.text_area(
     "Observations",
-    placeholder="Enter inspection comments, recommendations, approvals, or follow-up actions.",
+    placeholder="Enter inspection comments, recommendations, approvals or follow-up actions...",
     height=180
 )
 
@@ -192,6 +262,36 @@ if st.button(
         st.warning(
             "Please enter some notes first."
         )
+
+st.divider()
+
+# ==========================================================
+# SYSTEM STATUS
+# ==========================================================
+
+st.subheader("🟢 System Status")
+
+critical = (
+    machine_df["Failure Risk (%)"] >= 70
+).sum()
+
+if critical == 0:
+
+    st.success(
+        "All monitored machines are operating normally."
+    )
+
+elif critical <= 2:
+
+    st.warning(
+        f"{critical} machine(s) require maintenance attention."
+    )
+
+else:
+
+    st.error(
+        "Multiple critical machines detected."
+    )
 
 st.divider()
 
@@ -229,19 +329,13 @@ with right:
     st.info("""
 **Dashboard:** Supervisor Dashboard
 
-**Auto Refresh:** Every 10 Seconds
+**Mode:** Supervision
+
+**Refresh:** Automatic
 """)
 
-st.divider()
-
 # ==========================================================
-# SYSTEM STATUS
-# ==========================================================
-
-show_system_status(machine_df)
-
-# ==========================================================
-# FOOTER
+# END PAGE
 # ==========================================================
 
 end_page()

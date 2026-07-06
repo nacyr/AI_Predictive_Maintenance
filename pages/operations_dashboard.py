@@ -1,32 +1,86 @@
 import streamlit as st
+import pandas as pd
 
 from utils.page_config import setup_page, end_page
-from utils.dashboard_widgets import (
-    generate_machine_data,
-    show_machine_table,
-    show_machine_health_summary,
-    show_system_status
-)
+from utils.navigation import quick_navigation
+from utils.simulator import generate_sensor_data
 
 # ==========================================================
 # PAGE SETUP
 # ==========================================================
 
 user = setup_page(
-    title="Operations Dashboard",
+    title="⚙️ Operations Dashboard",
     icon="⚙️",
+    subtitle="Enterprise Operations Monitoring Center",
     allowed_roles=[
         "Administrator",
         "Operations Engineer"
-    ],
-    subtitle="Enterprise Operations Monitoring Center"
+    ]
 )
 
 # ==========================================================
-# LIVE MACHINE DATA
+# GENERATE LIVE MACHINE DATA
 # ==========================================================
 
-machine_df = generate_machine_data()
+machines = [
+    "Pump A1",
+    "Pump A2",
+    "Compressor B1",
+    "Compressor B2",
+    "Motor C1",
+    "Motor C2",
+    "Generator D1",
+    "Cooling Fan E1"
+]
+
+records = []
+
+for machine in machines:
+
+    sensor = generate_sensor_data()
+
+    risk = min(
+        100,
+        round(
+            (
+                sensor["temperature"] * 0.40 +
+                sensor["vibration"] * 15 +
+                sensor["pressure"] * 2
+            ),
+            1
+        )
+    )
+
+    if risk >= 70:
+        status = "CRITICAL"
+    elif risk >= 40:
+        status = "WARNING"
+    else:
+        status = "NORMAL"
+
+    records.append({
+
+        "Machine": machine,
+
+        "Temperature (°C)": sensor["temperature"],
+
+        "Pressure (bar)": sensor["pressure"],
+
+        "Vibration": sensor["vibration"],
+
+        "Current (A)": sensor["current"],
+
+        "RPM": sensor["rpm"],
+
+        "Running Hours": sensor["running_hours"],
+
+        "Failure Risk (%)": risk,
+
+        "Status": status
+    })
+
+machine_df = pd.DataFrame(records)
 
 # ==========================================================
 # KPI SECTION
@@ -59,21 +113,60 @@ st.divider()
 # LIVE MACHINE TABLE
 # ==========================================================
 
-show_machine_table(machine_df)
+st.subheader("🏭 Live Machine Monitoring")
+
+st.dataframe(
+    machine_df,
+    use_container_width=True,
+    hide_index=True
+)
+
+st.divider()
+
+# ==========================================================
+# FAILURE RISK CHART
+# ==========================================================
+
+st.subheader("📈 Failure Risk")
+
+st.bar_chart(
+    machine_df.set_index("Machine")["Failure Risk (%)"]
+)
+
+st.divider()
 
 # ==========================================================
 # HEALTH SUMMARY
 # ==========================================================
 
-show_machine_health_summary(machine_df)
+st.subheader("💚 Machine Health")
+
+health_df = machine_df.copy()
+
+health_df["Health (%)"] = (
+    100 - health_df["Failure Risk (%)"]
+).clip(lower=0)
+
+st.dataframe(
+    health_df[
+        [
+            "Machine",
+            "Health (%)",
+            "Failure Risk (%)",
+            "Status"
+        ]
+    ],
+    use_container_width=True,
+    hide_index=True
+)
 
 st.divider()
 
 # ==========================================================
-# ALERTS
+# ALERT CENTER
 # ==========================================================
 
-st.subheader("🚨 Operations Alert Center")
+st.subheader("🚨 Alert Center")
 
 alerts = machine_df[
     machine_df["Failure Risk (%)"] >= 70
@@ -88,7 +181,7 @@ if alerts.empty:
 else:
 
     st.error(
-        f"{len(alerts)} machine(s) require immediate attention."
+        f"{len(alerts)} critical machine(s) detected."
     )
 
     st.dataframe(
@@ -98,50 +191,30 @@ else:
     )
 
 st.divider()
-# ==========================================================
-# FAILURE RISK CHART
-# ==========================================================
-
-st.subheader("📈 AI Failure Risk Analysis")
-
-chart_df = (
-    machine_df
-    .set_index("Machine")["Failure Risk (%)"]
-)
-
-st.bar_chart(chart_df)
-
-st.divider()
 
 # ==========================================================
-# MACHINE HEALTH DETAILS
+# SYSTEM STATUS
 # ==========================================================
 
-st.subheader("🏭 Machine Health Details")
+st.subheader("🟢 System Status")
 
-health_df = machine_df.copy()
+if alerts.empty:
 
-health_df["Health (%)"] = (
-    100 - health_df["Failure Risk (%)"]
-).clip(lower=0)
+    st.success(
+        "Plant operating within normal conditions."
+    )
 
-st.dataframe(
-    health_df[
-        [
-            "Machine",
-            "Temperature (°C)",
-            "Pressure (bar)",
-            "Vibration",
-            "Current (A)",
-            "RPM",
-            "Health (%)",
-            "Failure Risk (%)",
-            "Status"
-        ]
-    ],
-    use_container_width=True,
-    hide_index=True
-)
+elif len(alerts) <= 2:
+
+    st.warning(
+        "Some machines require maintenance attention."
+    )
+
+else:
+
+    st.error(
+        "Critical maintenance intervention required."
+    )
 
 st.divider()
 
@@ -149,13 +222,12 @@ st.divider()
 # QUICK NAVIGATION
 # ==========================================================
 
-from utils.navigation import quick_navigation
-
 quick_navigation(
     prediction=True,
     analytics=True,
     maintenance=True,
-    admin=user.get("role") == "Administrator"
+    admin=user.get("role") == "Administrator",
+    operations=False
 )
 
 st.divider()
@@ -178,19 +250,13 @@ with left:
 
 with right:
 
-    st.info(f"""
+    st.info("""
 **Dashboard:** Operations Dashboard
 
-**Auto Refresh:** Every 10 Seconds
+**Monitoring:** Live
+
+**Refresh:** Automatic
 """)
-
-st.divider()
-
-# ==========================================================
-# SYSTEM STATUS
-# ==========================================================
-
-show_system_status(machine_df)
 
 # ==========================================================
 # END PAGE
