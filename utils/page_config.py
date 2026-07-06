@@ -1,12 +1,16 @@
 import streamlit as st
 from datetime import datetime
 
-
 # ==========================================================
-# PAGE SETUP (SAFE GLOBAL GUARD)
+# PAGE SETUP
 # ==========================================================
 
-def setup_page(title, icon, allowed_roles=None, subtitle=None):
+def setup_page(
+    title,
+    icon,
+    allowed_roles=None,
+    subtitle=None
+):
 
     st.set_page_config(
         page_title=title,
@@ -14,51 +18,101 @@ def setup_page(title, icon, allowed_roles=None, subtitle=None):
         layout="wide"
     )
 
-    # ------------------------------------------------------
-    # SESSION SAFE INIT
-    # ------------------------------------------------------
+    # ======================================================
+    # LOGIN CHECK
+    # ======================================================
 
-    user = st.session_state.get("user", {})
+    if "user" not in st.session_state:
+
+        st.warning("Please login first.")
+
+        st.switch_page("app.py")
+
+        st.stop()
+
+    user = st.session_state.user
 
     if not isinstance(user, dict):
-        user = {}
 
-    role = user.get("role", "")
+        st.session_state.clear()
+
+        st.switch_page("app.py")
+
+        st.stop()
+
+    # ======================================================
+    # ROLE CHECK
+    # ======================================================
 
     allowed_roles = allowed_roles or []
 
-    # ------------------------------------------------------
-    # ROLE CHECK
-    # ------------------------------------------------------
+    role = user.get("role", "")
 
     if allowed_roles and role not in allowed_roles:
 
-        st.error("Access Denied")
+        st.error("⛔ Access Denied")
+
         st.stop()
 
-    # ------------------------------------------------------
-    # HEADER BLOCK (SAFE)
-    # ------------------------------------------------------
+    # ======================================================
+    # PAGE HEADER
+    # ======================================================
 
-    st.markdown(
-        f"""
-        # {icon} {title}
+    left, right = st.columns([8, 2])
 
-        {subtitle or ""}
+    with left:
 
-        ---
-        """
-    )
+        st.markdown(f"""
+# {icon} {title}
 
-    # ------------------------------------------------------
-    # SESSION INFO (SAFE DISPLAY)
-    # ------------------------------------------------------
+{subtitle or ""}
+""")
 
-    col1, col2, col3 = st.columns(3)
+    with right:
 
-    col1.info(f"👤 User: {user.get('fullname', 'Unknown')}")
-    col2.info(f"🎭 Role: {role or 'Unknown'}")
-    col3.info(f"🕒 {datetime.now().strftime('%d %b %Y %H:%M:%S')}")
+        st.write("")
+
+        st.write("")
+
+        if st.button(
+            "🚪 Logout",
+            use_container_width=True,
+            type="secondary"
+        ):
+
+            st.session_state.clear()
+
+            st.success("Logged out successfully.")
+
+            st.switch_page("app.py")
+
+            st.stop()
+
+    st.divider()
+
+    # ======================================================
+    # SESSION INFORMATION
+    # ======================================================
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+
+        st.info(
+            f"👤 **User**\n\n{user.get('fullname','Unknown')}"
+        )
+
+    with c2:
+
+        st.info(
+            f"🎭 **Role**\n\n{role}"
+        )
+
+    with c3:
+
+        st.info(
+            f"🕒 **Current Time**\n\n{datetime.now().strftime('%d %b %Y %H:%M:%S')}"
+        )
 
     st.divider()
 
@@ -66,7 +120,7 @@ def setup_page(title, icon, allowed_roles=None, subtitle=None):
 
 
 # ==========================================================
-# END PAGE
+# FOOTER
 # ==========================================================
 
 def end_page():
@@ -74,5 +128,5 @@ def end_page():
     st.divider()
 
     st.caption(
-        "Industrial AI Predictive Maintenance System • Enterprise Edition"
+        "🏭 Industrial AI Predictive Maintenance System • Enterprise Edition v1.0"
     )
