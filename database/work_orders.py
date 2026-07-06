@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 # ==========================================================
-# DATABASE PATH
+# DATABASE
 # ==========================================================
 
 DB_PATH = Path(__file__).resolve().parent / "work_orders.db"
@@ -15,23 +15,33 @@ def get_connection():
 
 
 # ==========================================================
-# INIT DATABASE
+# INITIALIZE DATABASE
 # ==========================================================
 
 def create_work_orders_table():
+
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS work_orders (
+
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+
             machine TEXT NOT NULL,
+
             issue TEXT NOT NULL,
+
             priority TEXT DEFAULT 'MEDIUM',
+
             status TEXT DEFAULT 'PENDING',
+
             created_by TEXT,
+
             assigned_to TEXT,
+
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
             updated_at TEXT
         )
     """)
@@ -41,25 +51,90 @@ def create_work_orders_table():
 
 
 # ==========================================================
-# CREATE WORK ORDER
+# CREATE
 # ==========================================================
 
-def create_work_order(machine, issue, priority="MEDIUM", created_by="SYSTEM", assigned_to=None):
+def create_work_order(
+    machine,
+    issue,
+    priority="MEDIUM",
+    created_by="SYSTEM",
+    assigned_to=None
+):
 
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
-        INSERT INTO work_orders (machine, issue, priority, created_by, assigned_to)
+        INSERT INTO work_orders
+        (
+            machine,
+            issue,
+            priority,
+            created_by,
+            assigned_to
+        )
         VALUES (?, ?, ?, ?, ?)
-    """, (machine, issue, priority, created_by, assigned_to))
+    """, (
+        machine,
+        issue,
+        priority,
+        created_by,
+        assigned_to
+    ))
 
     conn.commit()
     conn.close()
 
+    return True
+
 
 # ==========================================================
-# UPDATE CORE FUNCTION
+# READ
+# ==========================================================
+
+def get_work_orders():
+
+    conn = get_connection()
+
+    df = pd.read_sql_query("""
+        SELECT *
+        FROM work_orders
+        ORDER BY datetime(created_at) DESC
+    """, conn)
+
+    conn.close()
+
+    return df
+
+
+def get_all_work_orders():
+    """Backward compatibility"""
+    return get_work_orders()
+
+
+# ==========================================================
+# SEARCH
+# ==========================================================
+
+def search_work_orders_by_machine(machine):
+
+    conn = get_connection()
+
+    df = pd.read_sql_query("""
+        SELECT *
+        FROM work_orders
+        WHERE machine LIKE ?
+        ORDER BY datetime(created_at) DESC
+    """, conn, params=(f"%{machine}%",))
+
+    conn.close()
+
+    return df
+
+
+# ==========================================================
+# UPDATE CORE
 # ==========================================================
 
 def update_work_order(work_order_id, **kwargs):
@@ -73,22 +148,22 @@ def update_work_order(work_order_id, **kwargs):
     fields = []
     values = []
 
-    for k, v in kwargs.items():
-        fields.append(f"{k}=?")
-        values.append(v)
+    for key, value in kwargs.items():
+
+        fields.append(f"{key}=?")
+        values.append(value)
 
     fields.append("updated_at=?")
-    values.append(datetime.now().isoformat())
+    values.append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     values.append(work_order_id)
 
-    sql = f"""
+    cursor.execute(f"""
         UPDATE work_orders
         SET {", ".join(fields)}
         WHERE id=?
-    """
+    """, values)
 
-    cursor.execute(sql, values)
     conn.commit()
     conn.close()
 
@@ -96,15 +171,39 @@ def update_work_order(work_order_id, **kwargs):
 
 
 # ==========================================================
-# STATUS UPDATE (STANDARDIZED)
+# STATUS
 # ==========================================================
 
 def update_work_order_status(work_order_id, status):
-    return update_work_order(work_order_id, status=status)
+
+    return update_work_order(
+        work_order_id,
+        status=status
+    )
+
+
+def change_work_order_status(work_order_id, status):
+    """Backward compatibility"""
+    return update_work_order_status(
+        work_order_id,
+        status
+    )
 
 
 # ==========================================================
-# DELETE WORK ORDER (FIX YOU REQUESTED)
+# ASSIGN ENGINEER
+# ==========================================================
+
+def assign_work_order(work_order_id, engineer):
+
+    return update_work_order(
+        work_order_id,
+        assigned_to=engineer
+    )
+
+
+# ==========================================================
+# DELETE
 # ==========================================================
 
 def delete_work_order(work_order_id):
@@ -120,40 +219,7 @@ def delete_work_order(work_order_id):
     conn.commit()
     conn.close()
 
-
-# ==========================================================
-# READ ALL WORK ORDERS
-# ==========================================================
-
-def get_work_orders():
-
-    conn = get_connection()
-
-    df = pd.read_sql_query("""
-        SELECT * FROM work_orders
-        ORDER BY datetime(created_at) DESC
-    """, conn)
-
-    conn.close()
-    return df
-
-
-# ==========================================================
-# SEARCH BY MACHINE
-# ==========================================================
-
-def search_work_orders_by_machine(machine_name):
-
-    conn = get_connection()
-
-    df = pd.read_sql_query("""
-        SELECT * FROM work_orders
-        WHERE machine LIKE ?
-        ORDER BY datetime(created_at) DESC
-    """, conn, params=(f"%{machine_name}%",))
-
-    conn.close()
-    return df
+    return True
 
 
 # ==========================================================
@@ -162,35 +228,37 @@ def search_work_orders_by_machine(machine_name):
 
 def get_work_order_statistics():
 
-    conn = get_connection()
-    cursor = conn.cursor()
+    orders = get_work_orders()
 
-    stats = {}
+    if orders.empty:
 
-    cursor.execute("SELECT COUNT(*) FROM work_orders")
-    stats["total"] = cursor.fetchone()[0]
+        return {
+            "total": 0,
+            "pending": 0,
+            "approved": 0,
+            "in_progress": 0,
+            "completed": 0,
+            "rejected": 0
+        }
 
-    cursor.execute("SELECT COUNT(*) FROM work_orders WHERE status='PENDING'")
-    stats["pending"] = cursor.fetchone()[0]
+    return {
 
-    cursor.execute("SELECT COUNT(*) FROM work_orders WHERE status='APPROVED'")
-    stats["approved"] = cursor.fetchone()[0]
+        "total": len(orders),
 
-    cursor.execute("SELECT COUNT(*) FROM work_orders WHERE status='IN_PROGRESS'")
-    stats["in_progress"] = cursor.fetchone()[0]
+        "pending": (orders["status"] == "PENDING").sum(),
 
-    cursor.execute("SELECT COUNT(*) FROM work_orders WHERE status='COMPLETED'")
-    stats["completed"] = cursor.fetchone()[0]
+        "approved": (orders["status"] == "APPROVED").sum(),
 
-    cursor.execute("SELECT COUNT(*) FROM work_orders WHERE status='REJECTED'")
-    stats["rejected"] = cursor.fetchone()[0]
+        "in_progress": (orders["status"] == "IN_PROGRESS").sum(),
 
-    conn.close()
-    return stats
+        "completed": (orders["status"] == "COMPLETED").sum(),
+
+        "rejected": (orders["status"] == "REJECTED").sum()
+    }
 
 
 # ==========================================================
-# ANALYTICS HELPERS
+# ANALYTICS
 # ==========================================================
 
 def get_machine_failure_frequency():
@@ -198,13 +266,16 @@ def get_machine_failure_frequency():
     conn = get_connection()
 
     df = pd.read_sql_query("""
-        SELECT machine, COUNT(*) as count
+        SELECT
+            machine,
+            COUNT(*) AS count
         FROM work_orders
         GROUP BY machine
         ORDER BY count DESC
     """, conn)
 
     conn.close()
+
     return df
 
 
@@ -213,74 +284,110 @@ def get_daily_work_order_trends():
     conn = get_connection()
 
     df = pd.read_sql_query("""
-        SELECT DATE(created_at) as date, COUNT(*) as count
+        SELECT
+            DATE(created_at) AS date,
+            COUNT(*) AS count
         FROM work_orders
         GROUP BY DATE(created_at)
         ORDER BY date
     """, conn)
 
     conn.close()
+
     return df
 
 
 def get_ai_vs_manual_breakdown():
 
     conn = get_connection()
+
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT created_by, COUNT(*)
+        SELECT
+            COALESCE(created_by,'MANUAL'),
+            COUNT(*)
         FROM work_orders
         GROUP BY created_by
     """)
 
     rows = cursor.fetchall()
+
     conn.close()
 
     return {
-        (r[0] if r[0] else "MANUAL"): r[1]
-        for r in rows
+        row[0]: row[1]
+        for row in rows
     }
 
 
 # ==========================================================
-# AI SAFETY SYSTEM
+# AI DUPLICATE PROTECTION
 # ==========================================================
 
-def recent_ai_work_order_exists(machine, issue, minutes_window=30):
+def recent_ai_work_order_exists(
+    machine,
+    issue,
+    minutes_window=30
+):
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    time_limit = (
-        datetime.now() - timedelta(minutes=minutes_window)
-    ).isoformat()
+    cutoff = (
+        datetime.now() -
+        timedelta(minutes=minutes_window)
+    ).strftime("%Y-%m-%d %H:%M:%S")
 
     cursor.execute("""
-        SELECT id FROM work_orders
+        SELECT id
+        FROM work_orders
         WHERE machine=?
         AND issue=?
         AND created_by='AI_SYSTEM'
         AND created_at>=?
-    """, (machine, issue, time_limit))
+    """, (
+        machine,
+        issue,
+        cutoff
+    ))
 
     exists = cursor.fetchone() is not None
 
     conn.close()
+
     return exists
 
 
-def create_work_order_from_prediction(machine, risk_score, sensor_data=None):
+# ==========================================================
+# CREATE FROM AI
+# ==========================================================
+
+def create_work_order_from_prediction(
+    machine,
+    risk_score,
+    sensor_data=None
+):
 
     if risk_score < 0.70:
         return False
 
-    issue = f"AI detected failure risk ({risk_score*100:.1f}%)"
+    issue = (
+        f"AI detected failure risk "
+        f"({risk_score * 100:.1f}%)"
+    )
 
-    if recent_ai_work_order_exists(machine, issue):
+    if recent_ai_work_order_exists(
+        machine,
+        issue
+    ):
         return False
 
-    priority = "HIGH" if risk_score >= 0.85 else "MEDIUM"
+    priority = (
+        "HIGH"
+        if risk_score >= 0.85
+        else "MEDIUM"
+    )
 
     create_work_order(
         machine=machine,
@@ -290,3 +397,10 @@ def create_work_order_from_prediction(machine, risk_score, sensor_data=None):
     )
 
     return True
+
+
+# ==========================================================
+# INITIALIZE DATABASE
+# ==========================================================
+
+create_work_orders_table()

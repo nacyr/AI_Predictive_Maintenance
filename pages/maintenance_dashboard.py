@@ -2,60 +2,105 @@ import streamlit as st
 import pandas as pd
 
 from utils.page_config import setup_page, end_page
-from utils.dashboard_widgets import (
-    load_work_orders,
-    generate_machine_data,
-    show_work_order_kpis,
-    show_machine_table
-)
 from utils.navigation import quick_navigation
 
 from database.work_orders import (
+    get_work_orders,
     create_work_order,
     update_work_order_status
 )
+
+from utils.simulator import generate_sensor_data
 
 # ==========================================================
 # PAGE SETUP
 # ==========================================================
 
 user = setup_page(
-    title="Maintenance Dashboard",
+    title="🛠 Maintenance Dashboard",
     icon="🛠",
+    subtitle="Maintenance Control Center",
     allowed_roles=[
         "Administrator",
         "Maintenance Engineer"
-    ],
-    subtitle="Maintenance Control Center"
+    ]
 )
 
 # ==========================================================
 # LOAD DATA
 # ==========================================================
 
-orders = load_work_orders()
-machines = generate_machine_data()
+orders = get_work_orders()
+
+if orders is None:
+    orders = pd.DataFrame()
+
+# ==========================================================
+# MACHINE DATA
+# ==========================================================
+
+machines = [
+    "Pump A1",
+    "Compressor B2",
+    "Motor C3"
+]
+
+machine_records = []
+
+for machine in machines:
+
+    sensor = generate_sensor_data()
+
+    machine_records.append({
+        "Machine": machine,
+        "Temperature": sensor["temperature"],
+        "Pressure": sensor["pressure"],
+        "Vibration": sensor["vibration"],
+        "Status": "RUNNING"
+    })
+
+machine_df = pd.DataFrame(machine_records)
 
 # ==========================================================
 # KPI SECTION
 # ==========================================================
 
-show_work_order_kpis(orders)
+st.subheader("📊 Work Order Overview")
+
+c1, c2, c3 = st.columns(3)
+
+c1.metric("Total Orders", len(orders))
+
+c2.metric(
+    "Pending",
+    (orders["status"] == "PENDING").sum()
+    if not orders.empty else 0
+)
+
+c3.metric(
+    "Completed",
+    (orders["status"] == "COMPLETED").sum()
+    if not orders.empty else 0
+)
 
 st.divider()
 
 # ==========================================================
-# PLANT OVERVIEW (READ ONLY)
+# MACHINE OVERVIEW
 # ==========================================================
 
 st.subheader("🏭 Plant Overview")
 
-show_machine_table(machines)
+st.dataframe(
+    machine_df,
+    use_container_width=True,
+    hide_index=True
+)
 
 st.divider()
 
 # ==========================================================
-# WORK ORDER CREATION (CORE FUNCTION)
+# CREATE WORK ORDER
 # ==========================================================
 
 st.subheader("➕ Create Work Order")
@@ -66,7 +111,7 @@ with col1:
 
     machine = st.selectbox(
         "Select Machine",
-        machines["Machine"].tolist() if not machines.empty else []
+        machine_df["Machine"].tolist()
     )
 
 with col2:
@@ -78,33 +123,45 @@ with col2:
 
 issue = st.text_area(
     "Issue Description",
-    placeholder="Describe the maintenance problem..."
+    placeholder="Describe the maintenance issue..."
 )
 
-if st.button("Create Work Order", use_container_width=True):
+if st.button(
+    "Create Work Order",
+    use_container_width=True
+):
 
-    if machine and issue.strip():
+    if issue.strip():
 
         create_work_order(
             machine=machine,
             issue=issue,
             priority=priority,
-            created_by=user.get("fullname", "SYSTEM")
+            created_by=user.get(
+                "fullname",
+                "SYSTEM"
+            )
         )
 
-        st.success("Work order created successfully.")
+        st.success(
+            "Work order created successfully."
+        )
+
         st.rerun()
 
     else:
-        st.warning("Please complete all fields.")
+
+        st.warning(
+            "Please enter an issue description."
+        )
 
 st.divider()
 
 # ==========================================================
-# WORK ORDER MANAGEMENT
+# WORK ORDERS
 # ==========================================================
 
-st.subheader("🧾 Work Order Management")
+st.subheader("🧾 Work Orders")
 
 if orders.empty:
 
@@ -121,7 +178,7 @@ else:
 st.divider()
 
 # ==========================================================
-# STATUS UPDATE (CONTROL ONLY)
+# UPDATE STATUS
 # ==========================================================
 
 st.subheader("⚙ Update Work Order Status")
@@ -135,27 +192,47 @@ if not orders.empty:
 
     new_status = st.selectbox(
         "New Status",
-        ["PENDING", "APPROVED", "IN_PROGRESS", "COMPLETED", "REJECTED"]
+        [
+            "PENDING",
+            "APPROVED",
+            "IN_PROGRESS",
+            "COMPLETED",
+            "REJECTED"
+        ]
     )
 
-    if st.button("Update Status", use_container_width=True):
+    if st.button(
+        "Update Status",
+        use_container_width=True
+    ):
 
-        update_work_order_status(order_id, new_status)
+        update_work_order_status(
+            order_id,
+            new_status
+        )
 
-        st.success("Status updated successfully.")
+        st.success(
+            "Status updated successfully."
+        )
+
         st.rerun()
 
 st.divider()
 
 # ==========================================================
-# SUMMARY VIEW
+# STATUS DISTRIBUTION
 # ==========================================================
 
-st.subheader("📊 Work Order Status Distribution")
+st.subheader("📈 Work Order Status Distribution")
 
 if not orders.empty:
-    st.bar_chart(orders["status"].value_counts())
+
+    st.bar_chart(
+        orders["status"].value_counts()
+    )
+
 else:
+
     st.info("No data available.")
 
 st.divider()
