@@ -1,49 +1,52 @@
 import streamlit as st
-import random
 
 
-def show_kpi_cards():
+def show_kpi_cards(
+    total_orders=0,
+    pending=0,
+    approved=0,
+    completed=0,
+    rejected=0,
+    critical=0,
+    warning=0,
+    healthy=0,
+    plant_health=None,
+):
     """
-    Displays key performance indicators (KPIs)
-    for industrial predictive maintenance dashboard.
+    Enterprise KPI Cards
+
+    Every dashboard can display only the KPIs it needs.
     """
 
-    st.subheader("📊 System KPIs")
+    metrics = []
 
-    col1, col2, col3, col4 = st.columns(4)
+    metrics.append(("📋 Total", total_orders))
 
-    # Simulated real-time values (later replaced with ML outputs / database)
-    machine_health = random.randint(70, 100)
-    active_alerts = random.randint(0, 5)
-    downtime_risk = random.randint(0, 40)
-    efficiency = random.randint(75, 99)
+    if pending is not None:
+        metrics.append(("🟡 Pending", pending))
 
-    with col1:
-        st.metric(
-            label="🟢 Machine Health",
-            value=f"{machine_health}%",
-            delta="+2%" if machine_health > 85 else "-3%"
-        )
+    if approved is not None:
+        metrics.append(("🔵 Approved", approved))
 
-    with col2:
-        st.metric(
-            label="🚨 Active Alerts",
-            value=active_alerts,
-            delta="-1" if active_alerts > 0 else "0"
-        )
+    if completed is not None:
+        metrics.append(("🟢 Completed", completed))
 
-    with col3:
-        st.metric(
-            label="⚠️ Downtime Risk",
-            value=f"{downtime_risk}%",
-            delta="+5%" if downtime_risk > 25 else "-2%"
-        )
+    if rejected is not None:
+        metrics.append(("🔴 Rejected", rejected))
 
-    with col4:
-        st.metric(
-            label="⚙️ Efficiency",
-            value=f"{efficiency}%",
-            delta="+3%" if efficiency > 85 else "-1%"
-        )
+    if critical is not None:
+        metrics.append(("🚨 Critical", critical))
 
-    st.divider()
+    if warning is not None:
+        metrics.append(("⚠ Warning", warning))
+
+    if healthy is not None:
+        metrics.append(("✅ Healthy", healthy))
+
+    if plant_health is not None:
+        metrics.append(("💚 Plant Health", f"{plant_health:.1f}%"))
+
+    cols = st.columns(len(metrics))
+
+    for col, (title, value) in zip(cols, metrics):
+        col.metric(title, value)

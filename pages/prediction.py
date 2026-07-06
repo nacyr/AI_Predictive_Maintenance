@@ -1,147 +1,310 @@
 import streamlit as st
 import pandas as pd
 
+from streamlit_autorefresh import st_autorefresh
+
 from utils.page_config import setup_page, end_page
 from utils.navigation import quick_navigation
-
 from utils.simulator import generate_sensor_data
-from ml.smart_maintenance_engine import predict_failure
+
+from database.work_orders import (
+    create_work_order_from_prediction
+)
+
+from components.live_status import show_live_status
+from components.kpi_cards import show_kpi_cards
+from components.live_machine_table import show_live_machine_table
+from components.plant_health import show_plant_health
+from components.alert_center import show_alert_center
 
 # ==========================================================
 # PAGE SETUP
 # ==========================================================
 
 user = setup_page(
-    title="AI Prediction Dashboard",
+    title="🤖 AI Prediction Dashboard",
     icon="🤖",
+    subtitle="Real-Time Predictive Maintenance",
     allowed_roles=[
         "Administrator",
         "Maintenance Engineer",
         "Operations Engineer",
         "Supervisor"
-    ],
-    subtitle="Machine Failure Prediction & Risk Analytics"
+    ]
 )
 
 # ==========================================================
-# INTRO
+# AUTO REFRESH
 # ==========================================================
 
-st.info(
-    "This dashboard is AI-only. It does not create or modify work orders."
+refresh_count = st_autorefresh(
+    interval=10000,
+    key="prediction_dashboard_refresh"
 )
 
+show_live_status(refresh_count)
+
+st.divider()
+
 # ==========================================================
-# MACHINE SIMULATION
+# LIVE MACHINE SIMULATION
 # ==========================================================
 
 machines = [
     "Pump A1",
+    "Pump A2",
+    "Compressor B1",
     "Compressor B2",
-    "Generator C3",
-    "Motor D4",
-    "Cooling Unit E5"
+    "Motor C1",
+    "Motor C2",
+    "Generator D1",
+    "Cooling Fan E1"
 ]
 
 records = []
 
-for m in machines:
+new_work_orders = 0
+
+for machine in machines:
 
     sensor = generate_sensor_data()
 
-    prediction, risk = predict_failure(
-        sensor["temperature"],
-        sensor["pressure"],
-        sensor["vibration"],
-        sensor["current"],
-        sensor["rpm"],
-        sensor["running_hours"]
+    risk = min(
+        100,
+        round(
+            (
+                sensor["temperature"] * 0.40
+                + sensor["vibration"] * 15
+                + sensor["pressure"] * 2
+            ),
+            1
+        )
     )
 
+    probability = risk / 100
+
+    created = create_work_order_from_prediction(
+        machine,
+        probability,
+        sensor
+    )
+
+    if created:
+        new_work_orders += 1
+
+    if risk >= 70:
+        status = "CRITICAL"
+
+    elif risk >= 40:
+        status = "WARNING"
+
+    else:
+        status = "NORMAL"
+
     records.append({
-        "Machine": m,
-        "Temperature": round(sensor["temperature"], 2),
-        "Pressure": round(sensor["pressure"], 2),
-        "Vibration": round(sensor["vibration"], 2),
-        "Current": round(sensor["current"], 2),
-        "RPM": int(sensor["rpm"]),
+
+        "Machine": machine,
+
+        "Temperature (°C)": round(sensor["temperature"],2),
+
+        "Pressure (bar)": round(sensor["pressure"],2),
+
+        "Vibration": round(sensor["vibration"],2),
+
+        "Current (A)": round(sensor["current"],2),
+
+        "RPM": round(sensor["rpm"],0),
+
         "Running Hours": sensor["running_hours"],
-        "Prediction": "FAILURE" if prediction else "NORMAL",
-        "Risk (%)": round(risk * 100, 2)
+
+        "Failure Risk (%)": risk,
+
+        "Status": status
+
     })
 
-df = pd.DataFrame(records)
+machine_df = pd.DataFrame(records)
 
 # ==========================================================
-# KPI SECTION
+# KPI CARDS
 # ==========================================================
 
-st.subheader("📊 AI Risk Overview")
+critical = (
+    machine_df["Failure Risk (%)"] >= 70
+).sum()
 
-high = (df["Risk (%)"] >= 70).sum()
-medium = ((df["Risk (%)"] >= 40) & (df["Risk (%)"] < 70)).sum()
-low = (df["Risk (%)"] < 40).sum()
+warning = (
+    (machine_df["Failure Risk (%)"] >= 40)
+    &
+    (machine_df["Failure Risk (%)"] < 70)
+).sum()
 
-c1, c2, c3 = st.columns(3)
+healthy = (
+    machine_df["Failure Risk (%)"] < 40
+).sum()
 
-c1.metric("High Risk", high)
-c2.metric("Medium Risk", medium)
-c3.metric("Low Risk", low)
+plant_health = round(
+    healthy / len(machine_df) * 100,
+    1
+)
 
-st.divider()
-
-# ==========================================================
-# FULL PREDICTION TABLE
-# ==========================================================
-
-st.subheader("🤖 Machine Failure Predictions")
-
-st.dataframe(
-    df,
-    use_container_width=True,
-    hide_index=True
+show_kpi_cards(
+    critical=critical,
+    warning=warning,
+    healthy=healthy,
+    plant_health=plant_health
 )
 
 st.divider()
 
 # ==========================================================
-# RISK VISUALIZATION
+# LIVE MACHINE TABLE
 # ==========================================================
 
-st.subheader("📈 Risk Analysis")
-
-st.bar_chart(df.set_index("Machine")["Risk (%)"])
+show_live_machine_table(machine_df)
 
 st.divider()
 
 # ==========================================================
-# HIGH RISK ALERTS (READ ONLY)
+# AI PREDICTION CHART
 # ==========================================================
 
-st.subheader("🚨 High Risk Machines")
+st.subheader("🤖 AI Failure Probability")
 
-high_risk = df[df["Risk (%)"] >= 70]
+st.bar_chart(
+    machine_df.set_index("Machine")["Failure Risk (%)"]
+)
 
-if high_risk.empty:
-    st.success("No high-risk machines detected.")
+st.caption(
+    "Predicted probability of equipment failure."
+)
+
+st.divider()
+# ==========================================================
+# AI DECISION SUMMARY
+# ==========================================================
+
+st.subheader("🧠 AI Decision Summary")
+
+if critical == 0:
+
+    st.success(
+        "AI analysis indicates that all monitored machines are operating within acceptable limits."
+    )
+
+elif critical <= 2:
+
+    st.warning(
+        f"AI detected {critical} machine(s) with high failure probability."
+    )
+
 else:
-    st.error(f"{len(high_risk)} machine(s) require attention.")
-    st.dataframe(high_risk, use_container_width=True, hide_index=True)
+
+    st.error(
+        "AI has detected multiple critical machines. Immediate maintenance planning is recommended."
+    )
 
 st.divider()
 
 # ==========================================================
-# INSIGHTS SECTION
+# PLANT HEALTH
 # ==========================================================
 
-st.subheader("🧠 AI Insights")
+show_plant_health(machine_df)
 
-if high == 0:
-    st.success("All machines are currently operating within safe limits.")
-elif high <= 2:
-    st.warning("Early warning: some machines are approaching failure threshold.")
+st.divider()
+
+# ==========================================================
+# AI ALERT CENTER
+# ==========================================================
+
+show_alert_center(machine_df)
+
+st.divider()
+
+# ==========================================================
+# AUTOMATIC WORK ORDERS
+# ==========================================================
+
+st.subheader("📋 AI Work Order Generator")
+
+if new_work_orders == 0:
+
+    st.success(
+        "No new AI work orders were generated during this monitoring cycle."
+    )
+
 else:
-    st.error("Critical: multiple machines show high failure probability.")
+
+    st.warning(
+        f"{new_work_orders} new AI work order(s) were automatically created."
+    )
+
+st.divider()
+
+# ==========================================================
+# MACHINE RANKING
+# ==========================================================
+
+st.subheader("🏆 Highest Risk Machines")
+
+ranking = (
+    machine_df
+    .sort_values(
+        "Failure Risk (%)",
+        ascending=False
+    )
+)
+
+st.dataframe(
+
+    ranking[
+        [
+            "Machine",
+            "Failure Risk (%)",
+            "Status"
+        ]
+    ],
+
+    use_container_width=True,
+
+    hide_index=True
+
+)
+
+st.divider()
+
+# ==========================================================
+# LIVE AI SUMMARY
+# ==========================================================
+
+st.subheader("📡 Live AI Monitoring")
+
+left, right = st.columns(2)
+
+with left:
+
+    st.success(f"""
+🤖 AI Engine: ACTIVE
+
+🏭 Machines Analysed: {len(machine_df)}
+
+📋 New Work Orders: {new_work_orders}
+
+🔄 Refresh Count: {refresh_count}
+""")
+
+with right:
+
+    st.info(f"""
+🟢 Healthy: {healthy}
+
+🟡 Warning: {warning}
+
+🔴 Critical: {critical}
+
+💚 Plant Health: {plant_health:.1f}%
+""")
 
 st.divider()
 
@@ -150,30 +313,51 @@ st.divider()
 # ==========================================================
 
 quick_navigation(
+
     prediction=False,
+
     analytics=True,
+
     maintenance=True,
+
+    operations=True,
+
     admin=user.get("role") == "Administrator"
+
 )
 
 st.divider()
 
 # ==========================================================
-# SESSION INFO
+# SESSION INFORMATION
 # ==========================================================
 
 st.subheader("👤 Session Information")
 
-st.info(f"""
+left, right = st.columns(2)
+
+with left:
+
+    st.info(f"""
 **User:** {user.get('fullname', 'Unknown')}
 
 **Role:** {user.get('role', 'Unknown')}
-
-**Mode:** AI Analysis Only
 """)
 
+with right:
+
+    st.info(f"""
+**Dashboard:** AI Prediction
+
+**Refresh Interval:** 10 Seconds
+
+**Refresh Count:** {refresh_count}
+""")
+
+st.divider()
+
 # ==========================================================
-# FOOTER
+# END PAGE
 # ==========================================================
 
 end_page()

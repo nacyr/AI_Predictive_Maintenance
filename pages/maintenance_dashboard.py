@@ -1,8 +1,11 @@
 import streamlit as st
 import pandas as pd
 
+from streamlit_autorefresh import st_autorefresh
+
 from utils.page_config import setup_page, end_page
 from utils.navigation import quick_navigation
+from utils.simulator import generate_sensor_data
 
 from database.work_orders import (
     get_work_orders,
@@ -10,7 +13,11 @@ from database.work_orders import (
     update_work_order_status
 )
 
-from utils.simulator import generate_sensor_data
+from components.live_status import show_live_status
+from components.kpi_cards import show_kpi_cards
+from components.live_machine_table import show_live_machine_table
+from components.plant_health import show_plant_health
+from components.alert_center import show_alert_center
 
 # ==========================================================
 # PAGE SETUP
@@ -27,7 +34,20 @@ user = setup_page(
 )
 
 # ==========================================================
-# LOAD DATA
+# AUTO REFRESH
+# ==========================================================
+
+refresh_count = st_autorefresh(
+    interval=10000,
+    key="maintenance_dashboard_refresh"
+)
+
+show_live_status(refresh_count)
+
+st.divider()
+
+# ==========================================================
+# LOAD WORK ORDERS
 # ==========================================================
 
 orders = get_work_orders()
@@ -36,66 +56,115 @@ if orders is None:
     orders = pd.DataFrame()
 
 # ==========================================================
-# MACHINE DATA
+# LIVE MACHINE DATA
 # ==========================================================
 
 machines = [
     "Pump A1",
+    "Pump A2",
+    "Compressor B1",
     "Compressor B2",
-    "Motor C3"
+    "Motor C1",
+    "Motor C2",
+    "Generator D1",
+    "Cooling Fan E1"
 ]
 
-machine_records = []
+records = []
 
 for machine in machines:
 
     sensor = generate_sensor_data()
 
-    machine_records.append({
+    risk = min(
+        100,
+        round(
+            sensor["temperature"] * 0.40 +
+            sensor["vibration"] * 15 +
+            sensor["pressure"] * 2,
+            1
+        )
+    )
+
+    if risk >= 70:
+        status = "CRITICAL"
+    elif risk >= 40:
+        status = "WARNING"
+    else:
+        status = "NORMAL"
+
+    records.append({
+
         "Machine": machine,
-        "Temperature": sensor["temperature"],
-        "Pressure": sensor["pressure"],
-        "Vibration": sensor["vibration"],
-        "Status": "RUNNING"
+
+        "Temperature (°C)": round(sensor["temperature"], 2),
+
+        "Pressure (bar)": round(sensor["pressure"], 2),
+
+        "Vibration": round(sensor["vibration"], 2),
+
+        "Current (A)": round(sensor["current"], 2),
+
+        "RPM": round(sensor["rpm"], 0),
+
+        "Running Hours": sensor["running_hours"],
+
+        "Failure Risk (%)": risk,
+
+        "Status": status
+
     })
 
-machine_df = pd.DataFrame(machine_records)
+machine_df = pd.DataFrame(records)
 
 # ==========================================================
-# KPI SECTION
+# KPI CARDS
 # ==========================================================
 
-st.subheader("📊 Work Order Overview")
+pending = (
+    orders["status"] == "PENDING"
+).sum() if not orders.empty else 0
 
-c1, c2, c3 = st.columns(3)
+completed = (
+    orders["status"] == "COMPLETED"
+).sum() if not orders.empty else 0
 
-c1.metric("Total Orders", len(orders))
+critical = (
+    machine_df["Failure Risk (%)"] >= 70
+).sum()
 
-c2.metric(
-    "Pending",
-    (orders["status"] == "PENDING").sum()
-    if not orders.empty else 0
+warning = (
+    (machine_df["Failure Risk (%)"] >= 40)
+    &
+    (machine_df["Failure Risk (%)"] < 70)
+).sum()
+
+healthy = (
+    machine_df["Failure Risk (%)"] < 40
+).sum()
+
+plant_health = round(
+    healthy / len(machine_df) * 100,
+    1
 )
 
-c3.metric(
-    "Completed",
-    (orders["status"] == "COMPLETED").sum()
-    if not orders.empty else 0
+show_kpi_cards(
+    total_orders=len(orders),
+    pending=pending,
+    completed=completed,
+    critical=critical,
+    warning=warning,
+    healthy=healthy,
+    plant_health=plant_health
 )
 
 st.divider()
 
 # ==========================================================
-# MACHINE OVERVIEW
+# LIVE MACHINE MONITORING
 # ==========================================================
 
-st.subheader("🏭 Plant Overview")
-
-st.dataframe(
-    machine_df,
-    use_container_width=True,
-    hide_index=True
-)
+show_live_machine_table(machine_df)
 
 st.divider()
 
@@ -110,7 +179,7 @@ col1, col2 = st.columns(2)
 with col1:
 
     machine = st.selectbox(
-        "Select Machine",
+        "Machine",
         machine_df["Machine"].tolist()
     )
 
@@ -118,12 +187,16 @@ with col2:
 
     priority = st.selectbox(
         "Priority",
-        ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+        [
+            "LOW",
+            "MEDIUM",
+            "HIGH",
+            "CRITICAL"
+        ]
     )
 
 issue = st.text_area(
-    "Issue Description",
-    placeholder="Describe the maintenance issue..."
+    "Issue Description"
 )
 
 if st.button(
@@ -152,20 +225,69 @@ if st.button(
     else:
 
         st.warning(
-            "Please enter an issue description."
+            "Please enter the issue description."
         )
 
 st.divider()
-
 # ==========================================================
-# WORK ORDERS
+# UPDATE WORK ORDER STATUS
 # ==========================================================
 
-st.subheader("🧾 Work Orders")
+st.subheader("⚙️ Update Work Order Status")
 
 if orders.empty:
 
     st.info("No work orders available.")
+
+else:
+
+    order_id = st.selectbox(
+        "Select Work Order",
+        orders["id"].tolist(),
+        key="maintenance_order"
+    )
+
+    status = st.selectbox(
+        "New Status",
+        [
+            "PENDING",
+            "APPROVED",
+            "IN_PROGRESS",
+            "COMPLETED",
+            "REJECTED"
+        ],
+        key="maintenance_status"
+    )
+
+    if st.button(
+        "Update Status",
+        use_container_width=True
+    ):
+
+        update_work_order_status(
+            order_id,
+            status
+        )
+
+        st.success(
+            "Work order updated successfully."
+        )
+
+        st.rerun()
+
+st.divider()
+
+# ==========================================================
+# WORK ORDER TABLE
+# ==========================================================
+
+st.subheader("📋 Maintenance Work Orders")
+
+if orders.empty:
+
+    st.info(
+        "No work orders available."
+    )
 
 else:
 
@@ -178,62 +300,76 @@ else:
 st.divider()
 
 # ==========================================================
-# UPDATE STATUS
+# PLANT HEALTH
 # ==========================================================
 
-st.subheader("⚙ Update Work Order Status")
-
-if not orders.empty:
-
-    order_id = st.selectbox(
-        "Select Work Order",
-        orders["id"].tolist()
-    )
-
-    new_status = st.selectbox(
-        "New Status",
-        [
-            "PENDING",
-            "APPROVED",
-            "IN_PROGRESS",
-            "COMPLETED",
-            "REJECTED"
-        ]
-    )
-
-    if st.button(
-        "Update Status",
-        use_container_width=True
-    ):
-
-        update_work_order_status(
-            order_id,
-            new_status
-        )
-
-        st.success(
-            "Status updated successfully."
-        )
-
-        st.rerun()
+show_plant_health(machine_df)
 
 st.divider()
 
 # ==========================================================
-# STATUS DISTRIBUTION
+# ALERT CENTER
 # ==========================================================
 
-st.subheader("📈 Work Order Status Distribution")
+show_alert_center(machine_df)
 
-if not orders.empty:
+st.divider()
 
-    st.bar_chart(
-        orders["status"].value_counts()
+# ==========================================================
+# MAINTENANCE SUMMARY
+# ==========================================================
+
+st.subheader("🛠 Maintenance Summary")
+
+left, right = st.columns(2)
+
+with left:
+
+    st.success(f"""
+📋 Total Work Orders: **{len(orders)}**
+
+🟡 Pending: **{pending}**
+
+✅ Completed: **{completed}**
+""")
+
+with right:
+
+    st.info(f"""
+🔴 Critical Machines: **{critical}**
+
+🟡 Warning Machines: **{warning}**
+
+🟢 Healthy Machines: **{healthy}**
+
+💚 Plant Health: **{plant_health:.1f}%**
+""")
+
+st.divider()
+
+# ==========================================================
+# SYSTEM STATUS
+# ==========================================================
+
+st.subheader("🟢 Maintenance Status")
+
+if critical == 0:
+
+    st.success(
+        "Plant equipment is operating normally."
+    )
+
+elif critical <= 2:
+
+    st.warning(
+        "Maintenance attention is recommended for critical machines."
     )
 
 else:
 
-    st.info("No data available.")
+    st.error(
+        "Immediate maintenance intervention is required."
+    )
 
 st.divider()
 
@@ -245,24 +381,39 @@ quick_navigation(
     prediction=True,
     analytics=True,
     maintenance=False,
+    operations=True,
     admin=user.get("role") == "Administrator"
 )
 
 st.divider()
 
 # ==========================================================
-# SESSION INFO
+# SESSION INFORMATION
 # ==========================================================
 
 st.subheader("👤 Session Information")
 
-st.info(f"""
+col1, col2 = st.columns(2)
+
+with col1:
+
+    st.info(f"""
 **User:** {user.get('fullname', 'Unknown')}
 
 **Role:** {user.get('role', 'Unknown')}
-
-**Mode:** Maintenance Control Center
 """)
+
+with col2:
+
+    st.info(f"""
+**Dashboard:** Maintenance Dashboard
+
+**Refresh Interval:** 10 Seconds
+
+**Refresh Count:** {refresh_count}
+""")
+
+st.divider()
 
 # ==========================================================
 # FOOTER

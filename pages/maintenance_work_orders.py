@@ -34,37 +34,54 @@ if orders is None or orders.empty:
     orders = pd.DataFrame()
 
 # ==========================================================
-# WORK ORDER TABLE
+# KPI SUMMARY
 # ==========================================================
 
-st.subheader("📋 All Work Orders")
+st.subheader("📊 Work Order Summary")
 
-if orders.empty:
-    st.info("No work orders available.")
+if not orders.empty:
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric("Total", len(orders))
+    col2.metric("Pending", (orders["status"] == "PENDING").sum())
+    col3.metric("In Progress", (orders["status"] == "IN_PROGRESS").sum())
+    col4.metric("Completed", (orders["status"] == "COMPLETED").sum())
+
 else:
-    st.dataframe(orders, use_container_width=True, hide_index=True)
+    st.info("No work order data available.")
 
 st.divider()
 
 # ==========================================================
-# SEARCH WORK ORDERS
+# SEARCH SECTION
 # ==========================================================
 
 st.subheader("🔍 Search Work Orders")
 
-search_text = st.text_input("Search by Machine")
+search_text = st.text_input(
+    "Search by Machine",
+    placeholder="e.g. Pump A1"
+)
 
 if search_text.strip():
     filtered = search_work_orders_by_machine(search_text)
 else:
     filtered = orders
 
-st.dataframe(filtered, use_container_width=True, hide_index=True)
+if filtered.empty:
+    st.info("No matching work orders found.")
+else:
+    st.dataframe(
+        filtered,
+        use_container_width=True,
+        hide_index=True
+    )
 
 st.divider()
 
 # ==========================================================
-# UPDATE STATUS
+# STATUS UPDATE
 # ==========================================================
 
 st.subheader("⚙ Update Work Order Status")
@@ -73,7 +90,8 @@ if not orders.empty:
 
     order_id = st.selectbox(
         "Select Work Order",
-        orders["id"].tolist()
+        orders["id"].tolist(),
+        key="wo_select"
     )
 
     new_status = st.selectbox(
@@ -84,10 +102,14 @@ if not orders.empty:
             "IN_PROGRESS",
             "COMPLETED",
             "REJECTED"
-        ]
+        ],
+        key="wo_status"
     )
 
-    if st.button("Update Status", use_container_width=True):
+    if st.button(
+        "Update Status",
+        use_container_width=True
+    ):
 
         update_work_order_status(order_id, new_status)
 
@@ -95,29 +117,50 @@ if not orders.empty:
         st.rerun()
 
 else:
-    st.info("No work orders to update.")
-
-# ==========================================================
-# SUMMARY
-# ==========================================================
+    st.info("No work orders available to update.")
 
 st.divider()
 
-st.subheader("📊 Quick Summary")
+# ==========================================================
+# FULL TABLE VIEW
+# ==========================================================
+
+st.subheader("📋 All Work Orders")
+
+if orders.empty:
+    st.info("No work orders available.")
+else:
+    st.dataframe(
+        orders,
+        use_container_width=True,
+        hide_index=True
+    )
+
+st.divider()
+
+# ==========================================================
+# QUICK INSIGHT SUMMARY
+# ==========================================================
+
+st.subheader("📈 Quick Insights")
 
 if not orders.empty:
 
-    col1, col2, col3 = st.columns(3)
+    status_counts = orders["status"].value_counts()
 
-    col1.metric("Total", len(orders))
-    col2.metric("Pending", (orders["status"] == "PENDING").sum())
-    col3.metric("Completed", (orders["status"] == "COMPLETED").sum())
+    st.bar_chart(status_counts)
+
+    st.caption(
+        "Distribution of work order statuses across the system."
+    )
 
 else:
-    st.info("No data available.")
+    st.info("No data available for insights.")
+
+st.divider()
 
 # ==========================================================
-# END PAGE
+# FOOTER
 # ==========================================================
 
 end_page()

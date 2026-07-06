@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
+from streamlit_autorefresh import st_autorefresh
 
 from utils.page_config import setup_page, end_page
-
 from utils.data_loader import (
     load_statistics,
     load_work_orders,
@@ -17,15 +18,12 @@ from utils.dashboard_widgets import (
     dataframe_card,
 )
 
-from utils.charts import (
-    line_chart,
-    bar_chart,
-)
+from utils.charts import line_chart, bar_chart
 
 from database.work_orders import (
     search_work_orders_by_machine,
     update_work_order_status,
-    delete_work_order
+    delete_work_order,
 )
 
 # ==========================================================
@@ -40,7 +38,33 @@ user = setup_page(
 )
 
 # ==========================================================
-# LOAD DATA
+# LIVE REFRESH
+# ==========================================================
+
+st.subheader("🟢 Live Dashboard")
+
+live_mode = st.toggle("Enable Live Monitoring (10s refresh)", value=True)
+
+if live_mode:
+    refresh_count = st_autorefresh(
+        interval=10_000,
+        key="admin_dashboard_refresh",
+    )
+
+    st.success(
+        f"""
+Live Monitoring Active  
+Last Updated: {datetime.now().strftime('%d %b %Y %H:%M:%S')}  
+Refresh Count: {refresh_count}
+"""
+    )
+else:
+    st.warning("Live monitoring paused.")
+
+st.divider()
+
+# ==========================================================
+# LOAD DATA (SAFE)
 # ==========================================================
 
 stats = load_statistics()
@@ -49,7 +73,7 @@ daily_trends = load_daily_trends()
 machine_frequency = load_machine_frequency()
 ai_breakdown = load_ai_breakdown()
 
-if orders is None or orders.empty:
+if orders is None:
     orders = pd.DataFrame()
 
 # ==========================================================
@@ -69,7 +93,7 @@ metric_row(
 st.divider()
 
 # ==========================================================
-# ANALYTICS TABS
+# TABS
 # ==========================================================
 
 tab1, tab2, tab3 = st.tabs([
@@ -78,70 +102,41 @@ tab1, tab2, tab3 = st.tabs([
     "🤖 AI vs Manual"
 ])
 
-# --------------------------
-# DAILY TRENDS
-# --------------------------
-
 with tab1:
-    st.subheader("Daily Work Order Trends")
+    st.subheader("Daily Trends")
 
-    if daily_trends.empty:
-        st.info("No trend data available.")
-    else:
-        line_chart(
-            daily_trends,
-            x="date",
-            y="count",
-            title="Daily Work Orders"
-        )
+    if not daily_trends.empty:
+        line_chart(daily_trends, x="date", y="count", title="Daily Work Orders")
         dataframe_card(daily_trends)
-
-# --------------------------
-# MACHINE FAILURES
-# --------------------------
+    else:
+        st.info("No trend data available.")
 
 with tab2:
-    st.subheader("Machine Failure Frequency")
+    st.subheader("Machine Failures")
 
-    if machine_frequency.empty:
-        st.info("No machine statistics available.")
-    else:
-        bar_chart(
-            machine_frequency,
-            x="machine",
-            y="count",
-            title="Machine Failure Frequency"
-        )
+    if not machine_frequency.empty:
+        bar_chart(machine_frequency, x="machine", y="count", title="Machine Failures")
         dataframe_card(machine_frequency)
-
-# --------------------------
-# AI BREAKDOWN
-# --------------------------
+    else:
+        st.info("No machine data available.")
 
 with tab3:
-    st.subheader("AI vs Manual Work Orders")
+    st.subheader("AI vs Manual")
 
-    if not ai_breakdown:
-        st.info("No AI work order data available.")
-    else:
+    if ai_breakdown:
         ai_df = pd.DataFrame({
             "Source": list(ai_breakdown.keys()),
             "Count": list(ai_breakdown.values())
         })
-
-        bar_chart(
-            ai_df,
-            x="Source",
-            y="Count",
-            title="AI vs Manual"
-        )
-
+        bar_chart(ai_df, x="Source", y="Count", title="AI vs Manual")
         dataframe_card(ai_df)
+    else:
+        st.info("No AI data available.")
 
 st.divider()
 
 # ==========================================================
-# SEARCH WORK ORDERS
+# SEARCH
 # ==========================================================
 
 section_title("🔍 Search Work Orders")
@@ -158,18 +153,26 @@ dataframe_card(filtered)
 st.divider()
 
 # ==========================================================
-# UPDATE STATUS
+# UPDATE STATUS (SAFE FIX)
 # ==========================================================
 
-section_title("⚙ Update Work Order")
+section_title("⚙ Update Work Order Status")
 
 if not orders.empty:
 
-    order_id = st.selectbox(
-        "Select Work Order",
-        orders["id"].tolist(),
-        key="admin_order"
+    order_ids = orders["id"].tolist()
+
+    order_id = st.selectbox("Select Work Order", order_ids, key="admin_order")
+
+    selected_row = orders[orders["id"] == order_id]
+
+    current = (
+        selected_row["status"].iloc[0]
+        if not selected_row.empty
+        else "UNKNOWN"
     )
+
+    st.caption(f"Current Status: **{current}**")
 
     new_status = st.selectbox(
         "New Status",
@@ -186,84 +189,63 @@ if not orders.empty:
 st.divider()
 
 # ==========================================================
-# DELETE WORK ORDER
+# DELETE (SAFE FIX)
 # ==========================================================
 
 section_title("🗑 Delete Work Order")
 
 if not orders.empty:
 
-    delete_id = st.selectbox(
-        "Select Work Order",
-        orders["id"].tolist(),
-        key="delete_order"
-    )
+    delete_id = st.selectbox("Select Work Order", orders["id"].tolist(), key="delete_order")
+    confirm = st.checkbox("Confirm deletion")
 
     if st.button("Delete Work Order", use_container_width=True):
 
-        delete_work_order(delete_id)
-        st.success("Work order deleted successfully.")
-        st.rerun()
+        if confirm:
+            delete_work_order(delete_id)
+            st.success("Work order deleted.")
+            st.rerun()
+        else:
+            st.warning("Please confirm deletion.")
 
 st.divider()
 
 # ==========================================================
-# FULL TABLE
+# TABLE
 # ==========================================================
 
-st.subheader("📋 All Work Orders")
+section_title("📋 Enterprise Work Orders")
 
-if orders.empty:
-    st.info("No work orders available.")
-else:
+if not orders.empty:
     st.dataframe(orders, use_container_width=True, hide_index=True)
-
-st.divider()
-
-# ==========================================================
-# QUICK NAVIGATION
-# ==========================================================
-
-st.subheader("⚡ Quick Navigation")
-
-c1, c2, c3, c4 = st.columns(4)
-
-with c1:
-    if st.button("🤖 Prediction", use_container_width=True):
-        st.switch_page("pages/prediction.py")
-
-with c2:
-    if st.button("📈 Analytics", use_container_width=True):
-        st.switch_page("pages/analytics.py")
-
-with c3:
-    if st.button("🛠 Maintenance", use_container_width=True):
-        st.switch_page("pages/maintenance_dashboard.py")
-
-with c4:
-    if st.button("⚙ Operations", use_container_width=True):
-        st.switch_page("pages/operations_dashboard.py")
-
-st.divider()
-
-# ==========================================================
-# SYSTEM STATUS
-# ==========================================================
-
-st.subheader("🟢 System Status")
-
-if orders.empty:
-    st.info("No maintenance records available.")
 else:
+    st.info("No work orders found.")
+
+st.divider()
+
+# ==========================================================
+# STATUS SUMMARY
+# ==========================================================
+
+section_title("🟢 Enterprise Status")
+
+if not orders.empty:
+
     pending = (orders["status"] == "PENDING").sum()
+    approved = (orders["status"] == "APPROVED").sum()
+    completed = (orders["status"] == "COMPLETED").sum()
 
-    if pending == 0:
-        st.success("All work orders are up to date.")
-    else:
-        st.warning(f"{pending} work order(s) are still pending.")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Pending", pending)
+    col2.metric("Approved", approved)
+    col3.metric("Completed", completed)
 
-# ==========================================================
-# END PAGE
-# ==========================================================
+    total = len(orders)
+    completion = (completed / total) * 100 if total else 0
+
+    st.progress(completion / 100)
+    st.caption(f"Completion Rate: {completion:.1f}%")
+
+st.divider()
 
 end_page()
