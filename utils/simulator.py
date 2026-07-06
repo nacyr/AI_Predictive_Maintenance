@@ -7,7 +7,7 @@ import random
 _machine_state = {}
 
 # ==========================================================
-# DEFAULT SENSOR VALUES
+# DEFAULT MACHINE VALUES
 # ==========================================================
 
 DEFAULT_SENSOR = {
@@ -27,6 +27,32 @@ DEFAULT_SENSOR = {
 }
 
 # ==========================================================
+# MACHINE PROFILES
+# ==========================================================
+
+MACHINE_PROFILE = {
+
+    "Pump A1": 0.90,
+
+    "Pump A2": 1.00,
+
+    "Compressor B1": 1.30,
+
+    "Compressor B2": 1.40,
+
+    "Motor C1": 0.95,
+
+    "Motor C2": 1.15,
+
+    "Generator D1": 1.20,
+
+    "Cooling Fan E1": 0.80,
+
+    "DEFAULT": 1.00
+
+}
+
+# ==========================================================
 # RANDOM WALK
 # ==========================================================
 
@@ -34,10 +60,9 @@ def drift(value, minimum, maximum, step):
 
     value += random.uniform(-step, step)
 
-    return round(
-        max(minimum, min(maximum, value)),
-        2
-    )
+    value = max(minimum, min(maximum, value))
+
+    return round(value, 2)
 
 # ==========================================================
 # SENSOR GENERATOR
@@ -47,54 +72,68 @@ def generate_sensor_data(machine_name="DEFAULT"):
 
     if machine_name not in _machine_state:
 
-        _machine_state[machine_name] = DEFAULT_SENSOR.copy()
+        sensor = DEFAULT_SENSOR.copy()
 
-        _machine_state[machine_name]["running_hours"] = random.randint(
-            100,
-            12000
-        )
+        sensor["temperature"] += random.uniform(-5, 5)
+
+        sensor["pressure"] += random.uniform(-0.5, 0.5)
+
+        sensor["vibration"] += random.uniform(-0.4, 0.4)
+
+        sensor["current"] += random.uniform(-5, 5)
+
+        sensor["rpm"] += random.randint(-200, 200)
+
+        sensor["running_hours"] = random.randint(500, 12000)
+
+        _machine_state[machine_name] = sensor
 
     sensor = _machine_state[machine_name]
 
     # ------------------------------------------------------
-    # Small realistic changes
+    # NORMAL SENSOR DRIFT
     # ------------------------------------------------------
 
     sensor["temperature"] = drift(
         sensor["temperature"],
         40,
-        95,
-        2
+        90,
+        1.5
     )
 
     sensor["pressure"] = drift(
         sensor["pressure"],
-        6,
-        10,
-        0.25
+        6.5,
+        9.5,
+        0.20
     )
 
     sensor["vibration"] = drift(
         sensor["vibration"],
         0.5,
-        5,
-        0.20
+        4.5,
+        0.15
     )
 
     sensor["current"] = drift(
         sensor["current"],
         15,
-        60,
-        1.5
+        55,
+        1.2
     )
 
     sensor["rpm"] = int(
 
         drift(
+
             sensor["rpm"],
+
             1500,
+
             3200,
-            60
+
+            40
+
         )
 
     )
@@ -102,66 +141,28 @@ def generate_sensor_data(machine_name="DEFAULT"):
     sensor["running_hours"] += random.randint(1, 5)
 
     # ------------------------------------------------------
-    # Occasionally simulate deterioration
+    # OCCASIONAL DETERIORATION
     # ------------------------------------------------------
 
     if random.random() < 0.15:
 
-        sensor["temperature"] += random.uniform(2, 6)
+        sensor["temperature"] += random.uniform(2, 5)
 
-        sensor["vibration"] += random.uniform(0.2, 0.8)
+        sensor["vibration"] += random.uniform(0.2, 0.6)
+
+        sensor["current"] += random.uniform(1, 3)
 
     # ------------------------------------------------------
-    # Occasionally simulate recovery
+    # OCCASIONAL RECOVERY
     # ------------------------------------------------------
 
     if random.random() < 0.10:
 
-        sensor["temperature"] -= random.uniform(2, 5)
+        sensor["temperature"] -= random.uniform(1, 4)
 
-        sensor["vibration"] -= random.uniform(0.2, 0.6)
+        sensor["vibration"] -= random.uniform(0.1, 0.4)
 
-    # ------------------------------------------------------
-    # Clamp values
-    # ------------------------------------------------------
-
-    sensor["temperature"] = round(
-
-        max(40, min(95, sensor["temperature"])),
-
-        2
-
-    )
-
-    sensor["pressure"] = round(
-
-        max(6, min(10, sensor["pressure"])),
-
-        2
-
-    )
-
-    sensor["vibration"] = round(
-
-        max(0.5, min(5, sensor["vibration"])),
-
-        2
-
-    )
-
-    sensor["current"] = round(
-
-        max(15, min(60, sensor["current"])),
-
-        2
-
-    )
-
-    sensor["rpm"] = int(
-
-        max(1500, min(3200, sensor["rpm"]))
-
-    )
+        sensor["current"] -= random.uniform(0.5, 2)
 
     return sensor.copy()
 
@@ -169,43 +170,75 @@ def generate_sensor_data(machine_name="DEFAULT"):
 # AI FAILURE RISK
 # ==========================================================
 
-def calculate_failure_risk(sensor):
+def calculate_failure_risk(sensor, machine_name="DEFAULT"):
+
+    profile = MACHINE_PROFILE.get(
+
+        machine_name,
+
+        MACHINE_PROFILE["DEFAULT"]
+
+    )
 
     temp_score = max(
+
         0,
-        sensor["temperature"] - 55
-    ) * 1.0
+
+        sensor["temperature"] - 50
+
+    ) * 1.5
 
     vibration_score = max(
+
         0,
-        sensor["vibration"] - 2.2
-    ) * 14
+
+        sensor["vibration"] - 1.8
+
+    ) * 18
 
     pressure_score = abs(
+
         sensor["pressure"] - 8
-    ) * 5
+
+    ) * 6
 
     current_score = max(
-        0,
-        sensor["current"] - 40
-    ) * 0.7
 
-    hour_score = max(
         0,
-        sensor["running_hours"] - 6000
-    ) / 700
+
+        sensor["current"] - 30
+
+    ) * 1.2
+
+    hour_score = sensor["running_hours"] / 800
+
+    random_score = random.uniform(-5, 10)
+
+    risk = (
+
+        temp_score
+
+        + vibration_score
+
+        + pressure_score
+
+        + current_score
+
+        + hour_score
+
+        + random_score
+
+    )
+
+    risk *= profile
 
     risk = round(
 
-        min(
+        max(
 
-            100,
+            0,
 
-            temp_score
-            + vibration_score
-            + pressure_score
-            + current_score
-            + hour_score
+            min(100, risk)
 
         ),
 
@@ -221,11 +254,11 @@ def calculate_failure_risk(sensor):
 
 def get_machine_status(risk):
 
-    if risk >= 80:
+    if risk >= 75:
 
         return "CRITICAL"
 
-    elif risk >= 55:
+    elif risk >= 50:
 
         return "WARNING"
 
